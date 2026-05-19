@@ -1,9 +1,22 @@
 .brand {
   background-image: none !important;
-  min-height: 64px !important;
+  min-height: 78px !important;
   align-items: center !important;
   justify-content: flex-start !important;
-  padding-left: 2px;
+  padding-left: 0 !important;
+  overflow: visible !important;
+}
+
+.brandText {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
 }
 
 .brandLogo {
@@ -17,30 +30,31 @@
 }
 
 .brand::before {
-  content: "Lifeguard Schedule";
+  content: "";
   display: block;
-  color: #082b3c;
-  font-size: clamp(28px, 8vw, 44px);
-  line-height: .95;
-  font-weight: 950;
-  letter-spacing: -.055em;
-  white-space: normal;
+  width: min(58vw, 270px);
+  aspect-ratio: 750 / 277;
+  background-image: url("data:image/webp;base64,UklGRngQAABXRUJQVlA4TGwQAAAv7sADEP+goG0b5e7zpaGWecHEPXSyImiifoaHZR9HmT5JWscKQJAf4cCa1uH/+//6u/q9+9fKZoq5VE7MiIieewX//v8iRObp+3epI7tWMgEAAMAvWjEAANCmFQMAYEO5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABgRLlsAGBEuWwAYES5bABg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");
+  background-repeat: no-repeat;
+  background-position: left center;
+  background-size: contain;
+  flex: 0 1 auto;
 }
 
 .header {
-  min-height: 86px !important;
+  min-height: 96px !important;
 }
 
 @media (max-width: 430px) {
   .header {
-    min-height: 78px !important;
+    min-height: 92px !important;
   }
 
   .brand {
-    min-height: 58px !important;
+    min-height: 78px !important;
   }
 
   .brand::before {
-    font-size: clamp(26px, 9vw, 36px);
+    width: min(58vw, 245px);
   }
 }
