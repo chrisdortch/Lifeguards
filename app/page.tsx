@@ -21,6 +21,7 @@ type ReportRow = { dateIso: string; date: string; am: string; pm: string; open: 
 
 const ADMIN_CODE = "7900";
 const STORAGE_KEY = "serenity-shores-lifeguard-scheduler-v2";
+const BRAND_LOGO_URL = "https://serenitystores.com/serenity-stores-logo.svg";
 
 function startOfWeekIso(offsetDays = 0) {
   const d = new Date();
@@ -119,11 +120,10 @@ export default function Home() {
       const data = await res.json();
       if (data.ok) {
         setShared(Boolean(data.shared));
-        setSyncStatus(data.shared ? "Saved to shared database" : "Saved in testing mode");
-        setState(data.state as AppState);
+        setSyncStatus(data.shared ? "Shared database connected" : "Testing mode: browser storage only");
       }
     } catch {
-      setSyncStatus("Saved locally; shared database unavailable");
+      setSyncStatus("Offline fallback: browser storage only");
     }
   }
 
@@ -131,95 +131,69 @@ export default function Home() {
     void loadShared();
   }, []);
 
-  function updateState(mutator: (draft: AppState) => AppState) {
-    void persist({ ...mutator(state), updatedAt: new Date().toISOString() });
-  }
-
-  const byDate = useMemo(() => {
-    const grouped = new Map<string, Shift[]>();
-    state.shifts.forEach((shift) => {
-      if (!grouped.has(shift.date)) grouped.set(shift.date, []);
-      grouped.get(shift.date)?.push(shift);
-    });
-    return grouped;
-  }, [state.shifts]);
-
   const selectedName = name.trim();
-  const myRequests = state.requests.filter((r) => r.name.toLowerCase() === selectedName.toLowerCase());
+  const statusText = `${syncStatus} · ${shared ? "shared" : "local"}`;
+
+  const openShifts = useMemo(() => state.shifts.filter((shift) => shift.date >= todayIso()).slice(0, 80), [state.shifts]);
+  const myRequests = useMemo(() => state.requests.filter((r) => r.name.toLowerCase() === selectedName.toLowerCase()), [state.requests, selectedName]);
   const pendingRequests = state.requests.filter((r) => r.status === "pending");
-  const openShifts = state.shifts.filter((s) => openCount(s) > 0);
-  const totalOpen = state.shifts.reduce((sum, s) => sum + openCount(s), 0);
-  const filledSlots = state.shifts.reduce((sum, s) => sum + s.assignments.length, 0);
-  const visibleDates = useMemo(() => Array.from(byDate.keys()).slice(0, 45), [byDate]);
-  const windowStart = scheduleWindow === "current" ? startOfWeekIso(0) : startOfWeekIso(7);
-  const windowEnd = endFromStart(windowStart, 6);
-  const windowDates = useMemo(
-    () => Array.from(byDate.keys()).filter((date) => date >= windowStart && date <= windowEnd),
-    [byDate, windowStart, windowEnd]
-  );
-  const statusText = `${hydrated ? syncStatus : "Loading schedule..."} · ${shared ? "shared" : "local"}`;
+  const reportRows = rowsBetween(state.shifts, reportStart, reportEnd);
+  const currentStart = startOfWeekIso(scheduleWindow === "current" ? 0 : 7);
+  const currentEnd = endFromStart(currentStart, 6);
+  const adminRows = rowsBetween(state.shifts, currentStart, currentEnd);
+
+  function updateState(updater: (current: AppState) => AppState) {
+    const next = updater(state);
+    void persist(next);
+  }
 
   function submitName() {
-    if (selectedName) setView("select");
+    if (!selectedName) return;
+    setView("select");
   }
 
-  function toggleShift(id: string) {
-    setSelected((current) => (current.includes(id) ? current.filter((x) => x !== id) : [...current, id]));
+  function toggleShift(shiftId: string) {
+    const shift = state.shifts.find((s) => s.id === shiftId);
+    if (!shift || openCount(shift) <= 0) return;
+    if (sameDayDouble(state.shifts, selected, shiftId)) return;
+    setSelected((current) => (current.includes(shiftId) ? current.filter((id) => id !== shiftId) : [...current, shiftId]));
   }
 
   function submitRequests() {
     if (!selectedName || selected.length === 0) return;
-    updateState((current) => {
-      const existing = new Set(current.requests.map((r) => `${r.name.toLowerCase()}|${r.shiftId}`));
-      const additions: RequestItem[] = selected
-        .filter((shiftId) => !existing.has(`${selectedName.toLowerCase()}|${shiftId}`))
-        .map((shiftId) => ({
-          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-          name: selectedName,
-          shiftId,
-          status: "pending",
-          createdAt: new Date().toISOString(),
-        }));
-      return { ...current, requests: [...current.requests, ...additions] };
-    });
+    const now = new Date().toISOString();
+    const newRequests: RequestItem[] = selected.map((shiftId) => ({
+      id: `${shiftId}-${selectedName}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      shiftId,
+      name: selectedName,
+      status: "pending",
+      createdAt: now,
+    }));
+    updateState((current) => ({ ...current, requests: [...current.requests, ...newRequests] }));
     setSelected([]);
     setView("confirm");
   }
 
-  function adminLogin() {
-    if (pin === ADMIN_CODE) {
-      setAdminAuthed(true);
-      setView("admin");
-      setPin("");
-    }
-  }
-
-  function approveRequest(req: RequestItem) {
+  function approveRequest(request: RequestItem) {
     updateState((current) => {
-      const shift = current.shifts.find((s) => s.id === req.shiftId);
-      if (!shift) return current;
-      const canAssign =
-        openCount(shift) > 0 &&
-        !shift.assignments.some((a) => a.name.toLowerCase() === req.name.toLowerCase()) &&
-        !sameDayDouble(current.shifts, shift, req.name);
+      const shift = current.shifts.find((s) => s.id === request.shiftId);
+      if (!shift || openCount(shift) <= 0) return current;
       return {
         ...current,
         shifts: current.shifts.map((s) =>
-          s.id === req.shiftId && canAssign
-            ? { ...s, assignments: [...s.assignments, { name: req.name, source: "request" }] }
+          s.id === request.shiftId
+            ? { ...s, assignments: [...s.assignments, { name: request.name, source: "request" as const }] }
             : s
         ),
-        requests: current.requests.map((r) =>
-          r.id === req.id ? { ...r, status: canAssign ? "approved" : "rejected" } : r
-        ),
+        requests: current.requests.map((r) => (r.id === request.id ? { ...r, status: "approved" as const } : r)),
       };
     });
   }
 
-  function rejectRequest(id: string) {
+  function rejectRequest(request: RequestItem) {
     updateState((current) => ({
       ...current,
-      requests: current.requests.map((r) => (r.id === id ? { ...r, status: "rejected" } : r)),
+      requests: current.requests.map((r) => (r.id === request.id ? { ...r, status: "rejected" as const } : r)),
     }));
   }
 
@@ -229,24 +203,22 @@ export default function Home() {
     updateState((current) => ({
       ...current,
       shifts: current.shifts.map((s) =>
-        s.id === shiftId && openCount(s) > 0 && !s.assignments.some((a) => a.name.toLowerCase() === clean.toLowerCase())
-          ? { ...s, assignments: [...s.assignments, { name: clean, source: "admin" }] }
-          : s
+        s.id === shiftId && openCount(s) > 0 ? { ...s, assignments: [...s.assignments, { name: clean, source: "manual" as const }] } : s
       ),
     }));
     setManualName("");
   }
 
-  function removeAssignment(shiftId: string, guardName: string) {
+  function removeAssignment(shiftId: string, oldName: string) {
     updateState((current) => ({
       ...current,
       shifts: current.shifts.map((s) =>
-        s.id === shiftId ? { ...s, assignments: s.assignments.filter((a) => a.name !== guardName) } : s
+        s.id === shiftId ? { ...s, assignments: s.assignments.filter((a) => a.name !== oldName) } : s
       ),
     }));
   }
 
-  function saveEditedName() {
+  function saveEdit() {
     if (!edit || !edit.value.trim()) return;
     updateState((current) => ({
       ...current,
@@ -359,62 +331,48 @@ export default function Home() {
         y,
         size: 10,
         font,
-        color: rgb(0.16, 0.31, 0.38),
+        color: rgb(0.22, 0.34, 0.4),
       });
-      y -= 24;
-      const headerHeight = 20;
-      const yBottom = y - headerHeight;
-      drawCell(cols.date.x, yBottom, cols.date.w, headerHeight, true);
-      drawCell(cols.am.x, yBottom, cols.am.w, headerHeight, true);
-      drawCell(cols.pm.x, yBottom, cols.pm.w, headerHeight, true);
-      drawCell(cols.open.x, yBottom, cols.open.w, headerHeight, true);
-      page.drawText("Date", { x: cols.date.x + 5, y: yBottom + 7, size: 8, font: bold });
-      page.drawText("AM Shift: 10:00 AM - 3:30 PM", { x: cols.am.x + 5, y: yBottom + 7, size: 8, font: bold });
-      page.drawText("PM Shift: 3:30 PM - 10:00 PM", { x: cols.pm.x + 5, y: yBottom + 7, size: 8, font: bold });
-      page.drawText("Open", { x: cols.open.x + 5, y: yBottom + 7, size: 8, font: bold });
-      y = yBottom;
+      y -= 18;
+      const headerHeight = 18;
+      drawCell(cols.date.x, y - headerHeight + 4, cols.date.w, headerHeight, true);
+      drawCell(cols.am.x, y - headerHeight + 4, cols.am.w, headerHeight, true);
+      drawCell(cols.pm.x, y - headerHeight + 4, cols.pm.w, headerHeight, true);
+      drawCell(cols.open.x, y - headerHeight + 4, cols.open.w, headerHeight, true);
+      page.drawText("Date", { x: cols.date.x + 5, y: y - 9, size: 8, font: bold, color: rgb(0, 0, 0) });
+      page.drawText("AM 10-3:30", { x: cols.am.x + 5, y: y - 9, size: 8, font: bold, color: rgb(0, 0, 0) });
+      page.drawText("PM 3:30-10", { x: cols.pm.x + 5, y: y - 9, size: 8, font: bold, color: rgb(0, 0, 0) });
+      page.drawText("Open", { x: cols.open.x + 5, y: y - 9, size: 8, font: bold, color: rgb(0, 0, 0) });
+      y -= headerHeight;
     }
 
-    const rows = rowsBetween(state.shifts, reportStart, reportEnd);
     drawPageHeader();
-
-    for (const row of rows) {
+    reportRows.forEach((row, index) => {
       const dateLines = wrapText(row.date, cols.date.w - 10);
       const amLines = wrapText(row.am || "OPEN - 3 needed", cols.am.w - 10);
       const pmLines = wrapText(row.pm || "OPEN - 3 needed", cols.pm.w - 10);
-      const openLines = wrapText(String(row.open), cols.open.w - 10);
-      const maxLines = Math.max(dateLines.length, amLines.length, pmLines.length, openLines.length);
-      const rowHeight = Math.max(34, 14 + maxLines * lineHeight);
-
-      if (y - rowHeight < margin) {
+      const height = Math.max(dateLines.length, amLines.length, pmLines.length, 1) * lineHeight + 10;
+      if (y - height < margin) {
         page = pdf.addPage([pageWidth, pageHeight]);
         drawPageHeader();
       }
-
-      const yBottom = y - rowHeight;
-      drawCell(cols.date.x, yBottom, cols.date.w, rowHeight);
-      drawCell(cols.am.x, yBottom, cols.am.w, rowHeight);
-      drawCell(cols.pm.x, yBottom, cols.pm.w, rowHeight);
-      drawCell(cols.open.x, yBottom, cols.open.w, rowHeight);
-      const textY = yBottom + rowHeight - 14;
-      drawTextLines(dateLines, cols.date.x + 5, textY);
-      drawTextLines(amLines, cols.am.x + 5, textY);
-      drawTextLines(pmLines, cols.pm.x + 5, textY);
-      drawTextLines(openLines, cols.open.x + 5, textY);
-      y = yBottom;
-    }
-
-    page.drawText(`Generated ${new Date().toLocaleString()}`, {
-      x: margin,
-      y: 16,
-      size: 7,
-      font,
-      color: rgb(0.35, 0.35, 0.35),
+      const yBottom = y - height + 4;
+      const fill = index % 2 === 0;
+      drawCell(cols.date.x, yBottom, cols.date.w, height, fill);
+      drawCell(cols.am.x, yBottom, cols.am.w, height, fill);
+      drawCell(cols.pm.x, yBottom, cols.pm.w, height, fill);
+      drawCell(cols.open.x, yBottom, cols.open.w, height, fill);
+      drawTextLines(dateLines, cols.date.x + 5, y - 8);
+      drawTextLines(amLines, cols.am.x + 5, y - 8);
+      drawTextLines(pmLines, cols.pm.x + 5, y - 8);
+      page.drawText(String(row.open), { x: cols.open.x + 5, y: y - 8, size: 9, font: bold, color: rgb(0.03, 0.16, 0.22) });
+      y -= height;
     });
 
     const bytes = await pdf.save();
-    const arrayBuffer = new ArrayBuffer(bytes.byteLength);
-    new Uint8Array(arrayBuffer).set(bytes);
+    const arrayBuffer = new ArrayBuffer(bytes.length);
+    const view = new Uint8Array(arrayBuffer);
+    view.set(bytes);
     const blob = new Blob([arrayBuffer], { type: "application/pdf" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -490,7 +448,7 @@ export default function Home() {
       <div className="topStrip">Serenity Shores pool · Lifeguard schedule</div>
       <header className="header">
         <div className="brand">
-          <img className="brandLogo" src="/serenity-shores-logo.svg" alt="Serenity Shores Table Rock Lake" decoding="async" />
+          <img className="brandLogo" src={BRAND_LOGO_URL} alt="Serenity Shores Table Rock Lake" decoding="async" />
         </div>
         <button className="adminBtn" onClick={() => setView(adminAuthed ? "admin" : "adminPin")}>Admin</button>
       </header>
@@ -518,26 +476,26 @@ export default function Home() {
                 </div>
                 <button className="ghostBtn" onClick={() => setView("entry")}>Change</button>
               </div>
-              <div className="panelGrid">
-                <div className="stat"><div className="statNum">{totalOpen}</div><div className="statLabel">Open spots</div></div>
-                <div className="stat"><div className="statNum">{selected.length}</div><div className="statLabel">Selected</div></div>
-              </div>
               <div className="tabs">
-                <button className="tab" data-active={filter === "open"} onClick={() => setFilter("open")}>Open only</button>
-                <button className="tab" data-active={filter === "all"} onClick={() => setFilter("all")}>All shifts</button>
+                <button className="tab" data-active={filter === "open"} onClick={() => setFilter("open")}>Open</button>
+                <button className="tab" data-active={filter === "all"} onClick={() => setFilter("all")}>All</button>
                 <button className="tab" data-active={filter === "mine"} onClick={() => setFilter("mine")}>Mine</button>
               </div>
             </div>
-            {visibleDates.map((date) => (
-              <div className="shiftCard" key={date}>
-                <div className="dateLine">{niceDate(date)}</div>
-                <div className="shiftGrid">{(byDate.get(date) || []).map(renderShiftButton)}</div>
-              </div>
-            ))}
+            {openShifts.map((shift, index, all) => {
+              const prev = all[index - 1];
+              const showDate = !prev || prev.date !== shift.date;
+              return (
+                <div key={shift.id} className={showDate ? "shiftCard" : ""} style={showDate ? undefined : { display: "contents" }}>
+                  {showDate ? <div className="dateLine">{niceDate(shift.date)}</div> : null}
+                  <div className="shiftGrid">{renderShiftButton(shift)}</div>
+                </div>
+              );
+            })}
             <div className="stickySubmit">
               <div className="stickySubmitInner">
-                <button className="primaryBtn" disabled={selected.length === 0} onClick={submitRequests}>Submit {selected.length || ""} Shift Request{selected.length === 1 ? "" : "s"}</button>
-                <span className="small">Requests wait for admin approval before becoming final.</span>
+                <button className="primaryBtn" disabled={selected.length === 0} onClick={submitRequests}>Submit {selected.length || ""} shift request{selected.length === 1 ? "" : "s"}</button>
+                <span className="small">Hollie/admin must approve before names appear on the final schedule.</span>
               </div>
             </div>
           </div>
@@ -547,18 +505,18 @@ export default function Home() {
           <div className="card hero stack">
             <span className="kicker">Submitted</span>
             <h1>Thank you.</h1>
-            <p className="lead">Your shift request was sent to the admin queue. The official schedule only changes after admin approval.</p>
-            <button className="primaryBtn" onClick={() => setView("select")}>Choose More Shifts</button>
+            <p className="lead">Your available shifts were sent to admin for approval.</p>
+            <button className="primaryBtn" onClick={() => setView("entry")}>Done</button>
           </div>
         ) : null}
 
         {view === "adminPin" ? (
           <div className="card hero stack">
             <span className="kicker">Admin access</span>
-            <h1>Enter the code.</h1>
-            <input className="input" inputMode="numeric" placeholder="Admin code" value={pin} onChange={(e) => setPin(e.target.value)} onKeyDown={(e) => e.key === "Enter" && adminLogin()} />
-            <button className="primaryBtn" onClick={adminLogin}>Open Admin</button>
-            <p className="small">Admin controls approvals, final schedule edits, reset, and PDF reports.</p>
+            <h1>Enter code.</h1>
+            <input className="input" inputMode="numeric" placeholder="Admin code" value={pin} onChange={(e) => setPin(e.target.value)} />
+            <button className="primaryBtn" onClick={() => { if (pin === ADMIN_CODE) { setAdminAuthed(true); setView("admin"); } }}>Open Admin</button>
+            <button className="ghostBtn" onClick={() => setView("entry")}>Back</button>
           </div>
         ) : null}
 
@@ -566,12 +524,10 @@ export default function Home() {
           <div className="stack">
             <div className="card stack">
               <span className="kicker">Admin dashboard</span>
-              <h2>Coverage control center</h2>
+              <h2>Schedule control</h2>
               <div className="panelGrid">
                 <div className="stat"><div className="statNum">{pendingRequests.length}</div><div className="statLabel">Pending</div></div>
-                <div className="stat"><div className="statNum">{totalOpen}</div><div className="statLabel">Open spots</div></div>
-                <div className="stat"><div className="statNum">{filledSlots}</div><div className="statLabel">Scheduled</div></div>
-                <div className="stat"><div className="statNum">{openShifts.length}</div><div className="statLabel">Shifts with gaps</div></div>
+                <div className="stat"><div className="statNum">{state.shifts.reduce((n, s) => n + openCount(s), 0)}</div><div className="statLabel">Open spots</div></div>
               </div>
             </div>
 
@@ -579,7 +535,7 @@ export default function Home() {
               <div className="row">
                 <div>
                   <h3>Current and next schedule</h3>
-                  <p className="small">Tap any scheduled name to edit or remove it.</p>
+                  <p className="small">Tap a name to edit it.</p>
                 </div>
                 <div className="tabs">
                   <button className="tab" data-active={scheduleWindow === "current"} onClick={() => setScheduleWindow("current")}>Current</button>
@@ -589,11 +545,11 @@ export default function Home() {
               <table className="table scheduleTable">
                 <thead><tr><th>Date</th><th>AM</th><th>PM</th></tr></thead>
                 <tbody>
-                  {windowDates.map((date) => (
-                    <tr key={date}>
-                      <td>{longDate(date)}</td>
-                      <td>{renderAdminShiftCell(date, "AM")}</td>
-                      <td>{renderAdminShiftCell(date, "PM")}</td>
+                  {adminRows.map((row) => (
+                    <tr key={row.dateIso}>
+                      <td>{row.date}</td>
+                      <td>{renderAdminShiftCell(row.dateIso, "AM")}</td>
+                      <td>{renderAdminShiftCell(row.dateIso, "PM")}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -602,68 +558,69 @@ export default function Home() {
 
             <div className="card stack">
               <h3>Pending requests</h3>
-              {pendingRequests.length === 0 ? <p className="small">No pending requests right now.</p> : null}
-              {pendingRequests.map((r) => {
-                const s = state.shifts.find((x) => x.id === r.shiftId);
+              {pendingRequests.length === 0 ? <p className="small">No pending requests.</p> : null}
+              {pendingRequests.map((request) => {
+                const shift = state.shifts.find((s) => s.id === request.shiftId);
                 return (
-                  <div className="shiftCard" key={r.id}>
-                    <div className="row">
-                      <div><strong>{r.name}</strong><div className="small">{s ? `${longDate(s.date)} · ${s.type} · ${s.start}-${s.end}` : r.shiftId}</div></div>
-                      <span className="badge badgePending">Pending</span>
+                  <div className="shiftCard" key={request.id}>
+                    <div className="dateLine">{request.name}</div>
+                    <p className="small">{shift ? `${niceDate(shift.date)} · ${shift.type} · ${shift.start}-${shift.end}` : "Shift not found"}</p>
+                    <div className="actions">
+                      <button className="primaryBtn" onClick={() => approveRequest(request)}>Approve</button>
+                      <button className="dangerBtn" onClick={() => rejectRequest(request)}>Reject</button>
                     </div>
-                    <div className="actions"><button className="secondaryBtn" onClick={() => approveRequest(r)}>Approve</button><button className="dangerBtn" onClick={() => rejectRequest(r.id)}>Reject</button></div>
                   </div>
                 );
               })}
             </div>
 
             <div className="card stack">
-              <h3>Schedule editor</h3>
-              <label className="small">Date</label>
-              <input className="input" type="date" value={adminDate} onChange={(e) => setAdminDate(e.target.value)} />
-              <label className="small">Add lifeguard manually</label>
+              <h3>Manual add</h3>
               <input className="input" placeholder="Name to add" value={manualName} onChange={(e) => setManualName(e.target.value)} />
-              {(byDate.get(adminDate) || []).map((s) => (
-                <div className="shiftCard" key={s.id}>
-                  <div className="row">
-                    <div><strong>{s.type} · {s.start}-{s.end}</strong><div className="small">{openCount(s)} open spot{openCount(s) === 1 ? "" : "s"}</div></div>
-                    {openCount(s) > 0 ? <span className="badge badgeOpen">Needs help</span> : <span className="badge badgeFull">Full</span>}
-                  </div>
-                  <div className="nameWrap">{s.assignments.map((a) => <button className="namePill" key={`${s.id}-${a.name}`} onClick={() => setEdit({ shiftId: s.id, oldName: a.name, value: a.name })}>{a.name}</button>)}</div>
-                  <button className="secondaryBtn" disabled={!manualName.trim() || openCount(s) <= 0} onClick={() => addManual(s.id)}>Add to this shift</button>
-                </div>
-              ))}
-            </div>
-
-            <div className="card stack">
-              <h3>Report export</h3>
-              <div className="shiftGrid">
-                <div><label className="small">Start date</label><input className="input" type="date" value={reportStart} onChange={(e) => setReportStart(e.target.value)} /></div>
-                <div><label className="small">End date</label><input className="input" type="date" value={reportEnd} onChange={(e) => setReportEnd(e.target.value)} /></div>
+              <input className="input" type="date" value={adminDate} onChange={(e) => setAdminDate(e.target.value)} />
+              <div className="actions">
+                <button className="secondaryBtn" onClick={() => { const s = findShift(adminDate, "AM"); if (s) addManual(s.id); }}>Add to AM</button>
+                <button className="secondaryBtn" onClick={() => { const s = findShift(adminDate, "PM"); if (s) addManual(s.id); }}>Add to PM</button>
               </div>
-              <div className="actions"><button className="primaryBtn" onClick={exportPdf}>Download PDF Report</button><button className="secondaryBtn" onClick={exportReport}>Download CSV Backup</button></div>
             </div>
 
             <div className="card stack">
-              <h3>Danger zone</h3>
-              <p className="small">To reset all requests and schedule assignments, type RESET SCHEDULE exactly.</p>
-              <input className="input" placeholder="RESET SCHEDULE" value={resetText} onChange={(e) => setResetText(e.target.value)} />
-              <button className="dangerBtn" disabled={resetText !== "RESET SCHEDULE"} onClick={resetAll}>Reset Everything</button>
+              <h3>Reports</h3>
+              <input className="input" type="date" value={reportStart} onChange={(e) => setReportStart(e.target.value)} />
+              <input className="input" type="date" value={reportEnd} onChange={(e) => setReportEnd(e.target.value)} />
+              <div className="actions">
+                <button className="primaryBtn" onClick={() => void exportPdf()}>Download PDF</button>
+                <button className="secondaryBtn" onClick={exportReport}>Download CSV</button>
+              </div>
+              <table className="table">
+                <thead><tr><th>Date</th><th>AM</th><th>PM</th><th>Open</th></tr></thead>
+                <tbody>{reportRows.slice(0, 14).map((r) => <tr key={r.dateIso}><td>{r.date}</td><td>{r.am}</td><td>{r.pm}</td><td>{r.open}</td></tr>)}</tbody>
+              </table>
             </div>
-          </div>
-        ) : null}
 
-        {edit ? (
-          <div className="modalBackdrop">
-            <div className="modal stack">
-              <h3>Edit scheduled lifeguard</h3>
-              <p className="small">Change or remove this name from the selected shift.</p>
-              <input className="input" value={edit.value} onChange={(e) => setEdit({ ...edit, value: e.target.value })} />
-              <div className="actions"><button className="primaryBtn" onClick={saveEditedName}>Save Name</button><button className="dangerBtn" onClick={() => { removeAssignment(edit.shiftId, edit.oldName); setEdit(null); }}>Remove</button><button className="secondaryBtn" onClick={() => setEdit(null)}>Cancel</button></div>
+            <div className="card stack">
+              <h3>Reset everything</h3>
+              <p className="small">Type RESET SCHEDULE exactly. This clears all requests and assignments.</p>
+              <input className="input" placeholder="RESET SCHEDULE" value={resetText} onChange={(e) => setResetText(e.target.value)} />
+              <button className="dangerBtn" disabled={resetText !== "RESET SCHEDULE"} onClick={resetAll}>Reset Schedule</button>
             </div>
           </div>
         ) : null}
       </section>
+
+      {edit ? (
+        <div className="modalBackdrop">
+          <div className="modal stack">
+            <h3>Edit scheduled name</h3>
+            <input className="input" value={edit.value} onChange={(e) => setEdit({ ...edit, value: e.target.value })} />
+            <div className="actions">
+              <button className="primaryBtn" onClick={saveEdit}>Save</button>
+              <button className="secondaryBtn" onClick={() => removeAssignment(edit.shiftId, edit.oldName)}>Remove</button>
+              <button className="ghostBtn" onClick={() => setEdit(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
