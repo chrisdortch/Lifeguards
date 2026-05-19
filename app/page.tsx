@@ -57,6 +57,10 @@ function cleanPin(value: string) {
   return value.replace(/\D/g, "").slice(0, LIFEGUARD_PIN_DIGITS);
 }
 
+function sameName(a: string, b: string) {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
 export default function Home() {
   const [state, setState] = useState<AppState>(() => blankState());
   const [shared, setShared] = useState(false);
@@ -116,6 +120,8 @@ export default function Home() {
   const selectedName = name.trim();
   const statusText = `${syncStatus} · ${shared ? "shared" : "local"}`;
   const selectableEnd = addDaysIso(SCHEDULE_LIMIT_DAYS);
+  const twoWeekSchedule = useMemo(() => state.shifts.filter((shift) => shift.date >= todayIso() && shift.date <= selectableEnd).sort((a, b) => a.id.localeCompare(b.id)), [state.shifts, selectableEnd]);
+  const twoWeekDates = useMemo(() => Array.from(new Set(twoWeekSchedule.map((shift) => shift.date))), [twoWeekSchedule]);
   const openShifts = useMemo(() => state.shifts.filter((shift) => shift.date >= todayIso() && shift.date <= selectableEnd).slice(0, 80), [state.shifts, selectableEnd]);
   const myRequests = useMemo(() => state.requests.filter((r) => r.name.toLowerCase() === selectedName.toLowerCase()), [state.requests, selectedName]);
   const pendingRequests = state.requests.filter((r) => r.status === "pending");
@@ -152,6 +158,14 @@ export default function Home() {
     });
   }
 
+  function assignedSameDay(shift: Shift, guardName: string, currentState = state) {
+    return currentState.shifts.some((s) => s.date === shift.date && s.id !== shift.id && s.assignments.some((a) => sameName(a.name, guardName)));
+  }
+
+  function alreadyAssigned(shift: Shift, guardName: string) {
+    return shift.assignments.some((a) => sameName(a.name, guardName));
+  }
+
   function toggleShift(shiftId: string) {
     const shift = state.shifts.find((s) => s.id === shiftId);
     if (!shift || openCount(shift) <= 0) return;
@@ -177,7 +191,7 @@ export default function Home() {
   function approveRequest(request: RequestItem) {
     updateState((current) => {
       const shift = current.shifts.find((s) => s.id === request.shiftId);
-      if (!shift || openCount(shift) <= 0) return current;
+      if (!shift || openCount(shift) <= 0 || alreadyAssigned(shift, request.name) || assignedSameDay(shift, request.name, current)) return current;
       return { ...current, shifts: current.shifts.map((s) => s.id === request.shiftId ? { ...s, assignments: [...s.assignments, { name: request.name, source: "request" as const }] } : s), requests: current.requests.map((r) => (r.id === request.id ? { ...r, status: "approved" as const } : r)) };
     });
   }
@@ -187,7 +201,7 @@ export default function Home() {
   function addManual(shiftId: string) {
     const clean = manualName.trim();
     if (!clean) return;
-    updateState((current) => ({ ...current, shifts: current.shifts.map((s) => s.id === shiftId && openCount(s) > 0 ? { ...s, assignments: [...s.assignments, { name: clean, source: "manual" as const }] } : s) }));
+    updateState((current) => ({ ...current, shifts: current.shifts.map((s) => s.id === shiftId && openCount(s) > 0 && !alreadyAssigned(s, clean) && !assignedSameDay(s, clean, current) ? { ...s, assignments: [...s.assignments, { name: clean, source: "manual" as const }] } : s) }));
     setManualName("");
   }
 
@@ -299,12 +313,37 @@ export default function Home() {
     return <button key={shift.id} className="shiftBtn" data-selected={isSelected} disabled={openCount(shift) <= 0 || requested} onClick={() => toggleShift(shift.id)}><span className="shiftTitle"><span>{shift.type === "AM" ? "Morning" : "Afternoon"}</span><span>{shift.start} - {shift.end}</span></span><span className="shiftMeta">{shift.assignments.length}/{shift.required} scheduled · {openCount(shift)} needed</span><span>{openCount(shift) > 0 ? <span className="badge badgeOpen">Open</span> : <span className="badge badgeFull">Full</span>} {requested ? <span className="badge badgePending">Requested</span> : null}</span></button>;
   }
 
+  function renderLifeguardScheduleShift(shift: Shift) {
+    const requested = myRequests.some((r) => r.shiftId === shift.id && r.status !== "rejected");
+    const isSelected = selected.includes(shift.id);
+    const meAssigned = shift.assignments.some((a) => sameName(a.name, selectedName));
+    const names = shift.assignments.map((a) => a.name.trim()).filter(Boolean);
+    const coworkers = names.filter((n) => !sameName(n, selectedName));
+    const canRequest = openCount(shift) > 0 && !requested && !meAssigned && !selectedSameDay(shift.id);
+    return <button key={shift.id} className="shiftBtn" data-selected={isSelected} disabled={!canRequest && !isSelected} onClick={() => toggleShift(shift.id)}><span className="shiftTitle"><span>{shift.type === "AM" ? "Morning" : "Afternoon"}</span><span>{shift.start} - {shift.end}</span></span><span className="shiftMeta">Approved: {names.length ? names.join(", ") : "No one yet"}</span>{meAssigned ? <span className="shiftMeta">You work this shift{coworkers.length ? ` with ${coworkers.join(", ")}` : ""}.</span> : null}<span>{meAssigned ? <span className="badge badgeFull">You work</span> : null} {openCount(shift) > 0 ? <span className="badge badgeOpen">{openCount(shift)} open</span> : <span className="badge badgeFull">Full</span>} {requested ? <span className="badge badgePending">Requested</span> : null} {isSelected ? <span className="badge badgePending">Selected</span> : null}</span></button>;
+  }
+
   function findShift(date: string, type: ShiftType) { return state.shifts.find((s) => s.date === date && s.type === type); }
+
+  function potentialRequestsForShift(shift: Shift) {
+    const seen = new Set<string>();
+    const statusOrder: Record<RequestItem["status"], number> = { pending: 0, rejected: 1, approved: 2 };
+    return state.requests
+      .filter((r) => r.shiftId === shift.id && !alreadyAssigned(shift, r.name))
+      .sort((a, b) => statusOrder[a.status] - statusOrder[b.status] || b.createdAt.localeCompare(a.createdAt))
+      .filter((r) => {
+        const key = r.name.trim().toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }
 
   function renderAdminShiftCell(date: string, type: ShiftType) {
     const shift = findShift(date, type);
     if (!shift) return <span className="small">No shift</span>;
-    return <div className="adminShiftCell"><div className="cellTime">{shift.start} - {shift.end}</div><div className="nameWrap">{shift.assignments.length === 0 ? <span className="openText">OPEN</span> : null}{shift.assignments.map((a) => <button className="namePill" key={`${shift.id}-${a.name}`} onClick={() => setEdit({ shiftId: shift.id, oldName: a.name, value: a.name })}>{a.name}</button>)}</div><span className={openCount(shift) > 0 ? "badge badgeOpen" : "badge badgeFull"}>{openCount(shift) > 0 ? `${openCount(shift)} open` : "Full"}</span></div>;
+    const potentials = potentialRequestsForShift(shift);
+    return <div className="adminShiftCell"><div className="cellTime">{shift.start} - {shift.end}</div><div className="nameWrap">{shift.assignments.length === 0 ? <span className="openText">OPEN</span> : null}{shift.assignments.map((a) => <button className="namePill" key={`${shift.id}-${a.name}`} onClick={() => setEdit({ shiftId: shift.id, oldName: a.name, value: a.name })}>{a.name}</button>)}</div><span className={openCount(shift) > 0 ? "badge badgeOpen" : "badge badgeFull"}>{openCount(shift) > 0 ? `${openCount(shift)} open` : "Full"}</span>{potentials.length ? <div className="nameWrap" aria-label="Potential alternates">{potentials.map((request) => { const blocked = openCount(shift) <= 0 || assignedSameDay(shift, request.name); const label = request.status === "pending" ? "pending" : request.status === "rejected" ? "denied" : "available"; return <button className="namePill" key={`${shift.id}-potential-${request.id}`} disabled={blocked} onClick={() => approveRequest(request)} title={blocked ? "Remove an approved guard first, or this lifeguard is already scheduled in the other shift that day." : "Add this available lifeguard to the approved schedule."} style={{ opacity: 0.58, background: "#f1f5f9", borderStyle: "dashed", color: "#233944" }}>{request.name} · {label}</button>; })}</div> : null}</div>;
   }
 
   return <main className="appShell">
@@ -312,12 +351,12 @@ export default function Home() {
     <header className="header"><div className="brand"><div className="brandText">Lifeguard Schedule</div></div><button className="adminBtn" onClick={() => setView(adminAuthed ? "admin" : "adminPin")}>Admin</button></header>
     <section className="main"><p className="small" style={{ marginTop: 0 }}>{statusText}</p>
       {view === "entry" ? <div className="card hero stack"><span className="kicker">Lifeguard check-in</span><h1>Help fill the pool schedule.</h1><p className="lead">Enter your first name and your six digit PIN, then select ALL SHIFTS YOU ARE AVAILABLE TO COVER. (You will not get all of the shifts you select, and no one will have a double shift).</p><input className="input" placeholder="First name" value={name} onChange={(e) => setName(e.target.value)} /><input className="input" inputMode="numeric" placeholder="Six digit PIN" value={lifeguardPin} onChange={(e) => setLifeguardPin(cleanPin(e.target.value))} onKeyDown={(e) => e.key === "Enter" && submitName()} />{loginError ? <p className="small" style={{ color: "#b42318" }}>{loginError}</p> : null}<button className="primaryBtn" onClick={submitName}>See Open Shifts</button><p className="small">Lifeguards can request shifts from today through {niceDate(selectableEnd)}. New shifts unlock automatically each day. Morning is 10:00 AM-3:30 PM. Afternoon is 3:30 PM-10:00 PM.</p></div> : null}
-      {view === "select" ? <div className="stack"><div className="card stack"><div className="row"><div><h2>Hi, {selectedName}</h2><p className="small">Select all shifts you are available to cover through {niceDate(selectableEnd)}. You will not get every shift you select, and nobody will have a double shift.</p></div><button className="ghostBtn" onClick={() => setView("entry")}>Change</button></div><div className="tabs"><button className="tab" data-active={filter === "open"} onClick={() => setFilter("open")}>Open</button><button className="tab" data-active={filter === "all"} onClick={() => setFilter("all")}>All</button><button className="tab" data-active={filter === "mine"} onClick={() => setFilter("mine")}>Mine</button></div></div>{openShifts.map((shift, index, all) => { const prev = all[index - 1]; const showDate = !prev || prev.date !== shift.date; return <div key={shift.id} className={showDate ? "shiftCard" : ""} style={showDate ? undefined : { display: "contents" }}>{showDate ? <div className="dateLine">{niceDate(shift.date)}</div> : null}<div className="shiftGrid">{renderShiftButton(shift)}</div></div>; })}<div className="stickySubmit"><div className="stickySubmitInner"><button className="primaryBtn" disabled={selected.length === 0} onClick={submitRequests}>Submit {selected.length || ""} shift request{selected.length === 1 ? "" : "s"}</button><span className="small">Hollie/admin must approve before names appear on the final schedule.</span></div></div></div> : null}
+      {view === "select" ? <div className="stack"><div className="card stack"><div className="row"><div><h2>Hi, {selectedName}</h2><p className="small">Select all shifts you are available to cover through {niceDate(selectableEnd)}. You will not get every shift you select, and nobody will have a double shift.</p></div><button className="ghostBtn" onClick={() => setView("entry")}>Change</button></div><div className="tabs"><button className="tab" data-active={filter === "open"} onClick={() => setFilter("open")}>Open</button><button className="tab" data-active={filter === "all"} onClick={() => setFilter("all")}>All</button><button className="tab" data-active={filter === "mine"} onClick={() => setFilter("mine")}>Mine</button></div></div><div className="card stack"><div><h3>Approved schedule: next two weeks</h3><p className="small">This shows the current approved schedule, who you will work with, and open shifts you can request. Tap an open shift here or below to select it.</p></div>{twoWeekDates.map((date) => <div className="shiftCard" key={`preview-${date}`}><div className="dateLine">{niceDate(date)}</div><div className="shiftGrid">{["AM", "PM"].map((type) => { const shift = findShift(date, type as ShiftType); return shift ? renderLifeguardScheduleShift(shift) : null; })}</div></div>)}</div>{openShifts.map((shift, index, all) => { const prev = all[index - 1]; const showDate = !prev || prev.date !== shift.date; return <div key={shift.id} className={showDate ? "shiftCard" : ""} style={showDate ? undefined : { display: "contents" }}>{showDate ? <div className="dateLine">{niceDate(shift.date)}</div> : null}<div className="shiftGrid">{renderShiftButton(shift)}</div></div>; })}<div className="stickySubmit"><div className="stickySubmitInner"><button className="primaryBtn" disabled={selected.length === 0} onClick={submitRequests}>Submit {selected.length || ""} shift request{selected.length === 1 ? "" : "s"}</button><span className="small">Hollie/admin must approve before names appear on the final schedule.</span></div></div></div> : null}
       {view === "confirm" ? <div className="card hero stack"><span className="kicker">Submitted</span><h1>Thank you.</h1><p className="lead">Your available shifts were sent to admin for approval.</p><button className="primaryBtn" onClick={() => setView("entry")}>Done</button></div> : null}
       {view === "adminPin" ? <div className="card hero stack"><span className="kicker">Admin access</span><h1>Enter code.</h1><input className="input" inputMode="numeric" placeholder="Admin code" value={pin} onChange={(e) => setPin(e.target.value)} /><button className="primaryBtn" onClick={() => { if (pin === ADMIN_CODE) { setAdminAuthed(true); setView("admin"); } }}>Open Admin</button><button className="ghostBtn" onClick={() => setView("entry")}>Back</button></div> : null}
       {view === "admin" ? <div className="stack"><div className="card stack"><span className="kicker">Admin dashboard</span><h2>Schedule control</h2><div className="panelGrid"><div className="stat"><div className="statNum">{pendingRequests.length}</div><div className="statLabel">Pending</div></div><div className="stat"><div className="statNum">{state.lifeguards.length}</div><div className="statLabel">Lifeguards</div></div><div className="stat"><div className="statNum">{state.shifts.reduce((n, s) => n + openCount(s), 0)}</div><div className="statLabel">Open spots</div></div></div></div>
         <div className="card stack"><h3>Lifeguards and PINs</h3><p className="small">Add or edit each lifeguard here. Lifeguards must enter their first name and matching six digit PIN before requesting shifts.</p><input className="input" placeholder="Lifeguard first name" value={guardForm.name} onChange={(e) => setGuardForm({ ...guardForm, name: e.target.value })} /><input className="input" inputMode="numeric" placeholder="Six digit PIN" value={guardForm.pin} onChange={(e) => setGuardForm({ ...guardForm, pin: cleanPin(e.target.value) })} /><div className="actions"><button className="primaryBtn" onClick={saveLifeguard}>{guardForm.id ? "Save Lifeguard" : "Add Lifeguard"}</button>{guardForm.id ? <button className="ghostBtn" onClick={() => setGuardForm({ id: "", name: "", pin: "" })}>Cancel</button> : null}</div><table className="table"><thead><tr><th>Name</th><th>PIN</th><th>Action</th></tr></thead><tbody>{state.lifeguards.map((g) => <tr key={g.id}><td>{g.name}</td><td>{g.pin}</td><td><div className="actions"><button className="secondaryBtn" onClick={() => setGuardForm(g)}>Edit</button><button className="dangerBtn" onClick={() => deleteLifeguard(g.id)}>Delete</button></div></td></tr>)}</tbody></table></div>
-        <div className="card stack"><div className="row"><div><h3>Current and next schedule</h3><p className="small">Tap a name to edit it.</p></div><div className="tabs"><button className="tab" data-active={scheduleWindow === "current"} onClick={() => setScheduleWindow("current")}>Current</button><button className="tab" data-active={scheduleWindow === "next"} onClick={() => setScheduleWindow("next")}>Next</button></div></div><table className="table scheduleTable"><thead><tr><th>Date</th><th>AM</th><th>PM</th></tr></thead><tbody>{adminRows.map((row) => <tr key={row.dateIso}><td>{row.date}</td><td>{renderAdminShiftCell(row.dateIso, "AM")}</td><td>{renderAdminShiftCell(row.dateIso, "PM")}</td></tr>)}</tbody></table></div>
+        <div className="card stack"><div className="row"><div><h3>Current and next schedule</h3><p className="small">Tap an approved name to edit or remove it. Grey dashed names are lifeguards who selected that shift but are not on the final schedule. They stay visible here for quick swaps, but they do not appear in PDF/CSV reports unless approved.</p></div><div className="tabs"><button className="tab" data-active={scheduleWindow === "current"} onClick={() => setScheduleWindow("current")}>Current</button><button className="tab" data-active={scheduleWindow === "next"} onClick={() => setScheduleWindow("next")}>Next</button></div></div><table className="table scheduleTable"><thead><tr><th>Date</th><th>AM</th><th>PM</th></tr></thead><tbody>{adminRows.map((row) => <tr key={row.dateIso}><td>{row.date}</td><td>{renderAdminShiftCell(row.dateIso, "AM")}</td><td>{renderAdminShiftCell(row.dateIso, "PM")}</td></tr>)}</tbody></table></div>
         <div className="card stack"><h3>Pending requests</h3>{pendingRequests.length === 0 ? <p className="small">No pending requests.</p> : null}{pendingRequests.map((request) => { const shift = state.shifts.find((s) => s.id === request.shiftId); return <div className="shiftCard" key={request.id}><div className="dateLine">{request.name}</div><p className="small">{shift ? `${niceDate(shift.date)} · ${shift.type} · ${shift.start}-${shift.end}` : "Shift not found"}</p><div className="actions"><button className="primaryBtn" onClick={() => approveRequest(request)}>Approve</button><button className="dangerBtn" onClick={() => rejectRequest(request)}>Reject</button></div></div>; })}</div>
         <div className="card stack"><h3>Manual add</h3><input className="input" placeholder="Name to add" value={manualName} onChange={(e) => setManualName(e.target.value)} /><input className="input" type="date" value={adminDate} onChange={(e) => setAdminDate(e.target.value)} /><div className="actions"><button className="secondaryBtn" onClick={() => { const s = findShift(adminDate, "AM"); if (s) addManual(s.id); }}>Add to AM</button><button className="secondaryBtn" onClick={() => { const s = findShift(adminDate, "PM"); if (s) addManual(s.id); }}>Add to PM</button></div></div>
         <div className="card stack"><h3>Reports</h3><input className="input" type="date" value={reportStart} onChange={(e) => setReportStart(e.target.value)} /><input className="input" type="date" value={reportEnd} onChange={(e) => setReportEnd(e.target.value)} /><div className="actions"><button className="primaryBtn" onClick={() => void exportPdf()}>Download PDF</button><button className="secondaryBtn" onClick={exportReport}>Download CSV</button></div><table className="table"><thead><tr><th>Date</th><th>AM</th><th>PM</th><th>Open</th></tr></thead><tbody>{reportRows.slice(0, 14).map((r) => <tr key={r.dateIso}><td>{r.date}</td><td>{r.am}</td><td>{r.pm}</td><td>{r.open}</td></tr>)}</tbody></table></div>
