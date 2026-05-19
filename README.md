@@ -15,11 +15,7 @@ Standalone scheduling app for Serenity Shores pool lifeguards.
 
 ## Isolation from Lakeside Essentials
 
-This repo is separate from `chrisdortch/serenity-stores` and should be deployed as its own Vercel project. Do not connect it to the Serenity Stores / Lakeside Essentials project.
-
-## Important MVP note
-
-This first version stores schedule data in browser localStorage. It is fully functional on one browser/device and good for testing the workflow and UI. For real multi-phone lifeguard submissions, connect a shared database such as Vercel Postgres, Neon, or Supabase.
+This repo is separate from `chrisdortch/serenity-stores` and should be deployed as its own Vercel project.
 
 ## Vercel settings
 
