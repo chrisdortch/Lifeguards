@@ -16,11 +16,11 @@ export async function GET() {
 
 export async function PUT(request: Request) {
   try {
-    const body = (await request.json()) as { state?: AppState };
+    const body = (await request.json()) as { state?: AppState; replace?: boolean };
     if (!body.state || !Array.isArray(body.state.shifts) || !Array.isArray(body.state.requests)) {
       return NextResponse.json({ ok: false, error: "Invalid schedule state." }, { status: 400 });
     }
-    const state = await saveState(body.state);
+    const state = await saveState(body.state, { replace: Boolean(body.replace) });
     return NextResponse.json({ ok: true, shared: hasDatabase(), state });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Unknown error" }, { status: 500 });
