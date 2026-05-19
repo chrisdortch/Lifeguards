@@ -5,7 +5,7 @@ const KEY = "main";
 
 type Row = { data: AppState };
 
-type SaveOptions = { replace?: boolean };
+type SaveOptions = { replace?: boolean; hardReplace?: boolean };
 
 function databaseUrl() {
   const explicit =
@@ -63,23 +63,23 @@ function normalizeState(state: AppState): AppState {
   };
 }
 
-function mergeStates(existing: AppState, incoming: AppState): AppState {
+function mergeRequests(existingRequests: AppState["requests"], incomingRequests: AppState["requests"]) {
+  const requestMap = new Map(existingRequests.map((request) => [request.id, request]));
+  for (const request of incomingRequests) {
+    requestMap.set(request.id, request);
+  }
+  return Array.from(requestMap.values()).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+function mergeStates(existing: AppState, incoming: AppState, options: SaveOptions = {}): AppState {
   const current = normalizeState(existing);
   const next = normalizeState(incoming);
 
-  const shiftMap = new Map(current.shifts.map((shift) => [shift.id, shift]));
-  for (const shift of next.shifts) {
-    shiftMap.set(shift.id, shift);
-  }
-
-  const requestMap = new Map(current.requests.map((request) => [request.id, request]));
-  for (const request of next.requests) {
-    requestMap.set(request.id, request);
-  }
-
   return {
-    shifts: Array.from(shiftMap.values()).sort((a, b) => a.id.localeCompare(b.id)),
-    requests: Array.from(requestMap.values()).sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+    // Normal lifeguard submissions should only merge request records so a stale phone cannot overwrite Hollie's live schedule.
+    // Admin schedule edits pass replace=true, which replaces assignments while still merging any newly submitted requests.
+    shifts: options.replace ? next.shifts : current.shifts,
+    requests: mergeRequests(current.requests, next.requests),
     lifeguards: next.lifeguards,
     updatedAt: new Date().toISOString(),
   };
@@ -105,7 +105,7 @@ export async function saveState(state: AppState, options: SaveOptions = {}): Pro
   await sql`create table if not exists schedule_state (id text primary key, data jsonb not null, updated_at timestamptz not null default now())`;
 
   const existingRows = await sql`select data from schedule_state where id = ${KEY} limit 1` as Row[];
-  const clean = options.replace || !existingRows.length ? incoming : mergeStates(existingRows[0].data, incoming);
+  const clean = options.hardReplace || !existingRows.length ? incoming : mergeStates(existingRows[0].data, incoming, options);
 
   await sql`
     insert into schedule_state (id, data, updated_at)
