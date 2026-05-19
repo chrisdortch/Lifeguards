@@ -20,10 +20,9 @@ button:active { transform: scale(0.97); }
 button:disabled { cursor: not-allowed; opacity: .55; transform: none; }
 .appShell { min-height: 100vh; background: radial-gradient(circle at 88% 2%, rgba(215,181,109,.28), transparent 27%), radial-gradient(circle at 10% 0%, rgba(14,129,146,.18), transparent 32%), linear-gradient(135deg, #f8fcfd 0%, #eaf7f9 52%, #fffaf0 100%); }
 .topStrip { background: #07364a; color: #fff; text-align: center; font-size: 11px; font-weight: 900; letter-spacing: .16em; text-transform: uppercase; padding: 9px 12px; }
-.header { position: sticky; top: 0; z-index: 30; background: rgba(255,255,255,.93); backdrop-filter: blur(16px); border-bottom: 1px solid rgba(8,43,60,.1); padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.brand { min-width: 0; }
-.brandTitle { margin: 0; font-size: 18px; line-height: 1.05; font-weight: 950; letter-spacing: -.03em; }
-.brandSub { margin: 3px 0 0; font-size: 11px; color: #426071; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.header { position: sticky; top: 0; z-index: 30; background: rgba(255,255,255,.93); backdrop-filter: blur(16px); border-bottom: 1px solid rgba(8,43,60,.1); padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.brand { min-width: 0; display: flex; align-items: center; gap: 11px; }
+.brandLogo { width: min(52vw, 250px); max-height: 78px; display: block; object-fit: contain; mix-blend-mode: multiply; }
 .adminBtn, .primaryBtn, .secondaryBtn, .dangerBtn, .ghostBtn { border: 0; border-radius: 999px; font-weight: 950; }
 .adminBtn { background: var(--lake-blue); color: #fff; padding: 11px 15px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; box-shadow: 0 10px 24px rgba(7,95,118,.18); }
 .main { width: min(100%, 760px); margin: 0 auto; padding: 18px 14px 120px; }
@@ -72,5 +71,5 @@ p { line-height: 1.55; }
 .modalBackdrop { position: fixed; inset: 0; background: rgba(8,43,60,.42); z-index: 80; display: grid; place-items: end center; padding: 16px; }
 .modal { width: min(100%, 520px); background: #fff; border-radius: 30px; padding: 20px; box-shadow: 0 28px 80px rgba(8,43,60,.34); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
-@media (min-width: 640px) { .shiftGrid { grid-template-columns: repeat(2, 1fr); } .main { padding-top: 28px; } }
+@media (min-width: 640px) { .shiftGrid { grid-template-columns: repeat(2, 1fr); } .main { padding-top: 28px; } .brandLogo { width: 286px; } }
 @media print { .header, .topStrip, .stickySubmit, button, .noPrint { display: none !important; } .main { width: 100%; padding: 0; } .card { box-shadow: none; border: 1px solid #000; } body { background: #fff; color: #000; } }
