@@ -1,6 +1,6 @@
 export type ShiftType = "AM" | "PM";
 export type RequestStatus = "pending" | "approved" | "rejected";
-export type Assignment = { name: string; source?: "admin" | "request" };
+export type Assignment = { name: string; source?: "admin" | "request" | "manual" };
 export type Shift = { id: string; date: string; type: ShiftType; start: string; end: string; required: number; assignments: Assignment[] };
 export type RequestItem = { id: string; name: string; shiftId: string; status: RequestStatus; createdAt: string };
 export type AppState = { shifts: Shift[]; requests: RequestItem[]; updatedAt: string };
