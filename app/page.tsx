@@ -12,7 +12,6 @@ import {
   longDate,
   niceDate,
   openCount,
-  sameDayDouble,
   todayIso,
 } from "../lib/schedule";
 
@@ -22,6 +21,7 @@ type ReportRow = { dateIso: string; date: string; am: string; pm: string; open: 
 const ADMIN_CODE = "7900";
 const STORAGE_KEY = "serenity-shores-lifeguard-scheduler-v2";
 const BRAND_LOGO_URL = "https://serenitystores.com/serenity-stores-logo.svg";
+const SCHEDULE_LIMIT_DAYS = 14;
 
 function startOfWeekIso(offsetDays = 0) {
   const d = new Date();
@@ -133,8 +133,12 @@ export default function Home() {
 
   const selectedName = name.trim();
   const statusText = `${syncStatus} · ${shared ? "shared" : "local"}`;
+  const selectableEnd = addDaysIso(SCHEDULE_LIMIT_DAYS);
 
-  const openShifts = useMemo(() => state.shifts.filter((shift) => shift.date >= todayIso()).slice(0, 80), [state.shifts]);
+  const openShifts = useMemo(
+    () => state.shifts.filter((shift) => shift.date >= todayIso() && shift.date <= selectableEnd).slice(0, 80),
+    [state.shifts, selectableEnd]
+  );
   const myRequests = useMemo(() => state.requests.filter((r) => r.name.toLowerCase() === selectedName.toLowerCase()), [state.requests, selectedName]);
   const pendingRequests = state.requests.filter((r) => r.status === "pending");
   const reportRows = rowsBetween(state.shifts, reportStart, reportEnd);
@@ -152,17 +156,35 @@ export default function Home() {
     setView("select");
   }
 
+  function selectedSameDay(shiftId: string) {
+    const shift = state.shifts.find((s) => s.id === shiftId);
+    if (!shift) return false;
+    return selected.some((id) => {
+      const selectedShift = state.shifts.find((s) => s.id === id);
+      return Boolean(selectedShift && selectedShift.date === shift.date && selectedShift.id !== shift.id);
+    });
+  }
+
   function toggleShift(shiftId: string) {
     const shift = state.shifts.find((s) => s.id === shiftId);
     if (!shift || openCount(shift) <= 0) return;
-    if (sameDayDouble(state.shifts, selected, shiftId)) return;
+    if (shift.date < todayIso() || shift.date > selectableEnd) return;
+    if (!selected.includes(shiftId) && selectedSameDay(shiftId)) return;
     setSelected((current) => (current.includes(shiftId) ? current.filter((id) => id !== shiftId) : [...current, shiftId]));
   }
 
   function submitRequests() {
     if (!selectedName || selected.length === 0) return;
+    const validSelected = selected.filter((shiftId) => {
+      const shift = state.shifts.find((s) => s.id === shiftId);
+      return Boolean(shift && shift.date >= todayIso() && shift.date <= selectableEnd && openCount(shift) > 0);
+    });
+    if (validSelected.length === 0) {
+      setSelected([]);
+      return;
+    }
     const now = new Date().toISOString();
-    const newRequests: RequestItem[] = selected.map((shiftId) => ({
+    const newRequests: RequestItem[] = validSelected.map((shiftId) => ({
       id: `${shiftId}-${selectedName}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       shiftId,
       name: selectedName,
@@ -462,7 +484,7 @@ export default function Home() {
             <p className="lead">Enter your first name, choose the morning or afternoon shifts you can cover, then submit. Hollie/admin approves the final schedule.</p>
             <input className="input" placeholder="First name" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submitName()} />
             <button className="primaryBtn" onClick={submitName}>See Open Shifts</button>
-            <p className="small">Shifts run from now through Oct. 10, 2026. Morning is 10:00 AM-3:30 PM. Afternoon is 3:30 PM-10:00 PM.</p>
+            <p className="small">Lifeguards can request shifts from today through {niceDate(selectableEnd)}. New shifts unlock automatically each day. Morning is 10:00 AM-3:30 PM. Afternoon is 3:30 PM-10:00 PM.</p>
           </div>
         ) : null}
 
@@ -472,7 +494,7 @@ export default function Home() {
               <div className="row">
                 <div>
                   <h2>Hi, {selectedName}</h2>
-                  <p className="small">Select openings you are available to cover.</p>
+                  <p className="small">Select openings through {niceDate(selectableEnd)}. Later shifts unlock automatically each day.</p>
                 </div>
                 <button className="ghostBtn" onClick={() => setView("entry")}>Change</button>
               </div>
