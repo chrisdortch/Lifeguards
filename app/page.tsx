@@ -7,59 +7,20 @@ type View = "entry" | "select" | "confirm" | "adminPin" | "admin";
 type ReportRow = { dateIso: string; date: string; am: string; pm: string; open: number };
 
 const ADMIN_CODE = "7900";
-const STORAGE_KEY = "serenity-shores-lifeguard-scheduler-v3";
+const STORAGE_KEY = "serenity-shores-lifeguard-scheduler-v4";
 const SCHEDULE_LIMIT_DAYS = 14;
-const LIFEGUARD_PIN_DIGITS = 6;
+const PIN_DIGITS = 6;
 
 function normalizeState(input: AppState): AppState {
-  return { ...blankState(), ...input, lifeguards: Array.isArray(input.lifeguards) ? input.lifeguards : [] };
+  return { ...blankState(), ...input, lifeguards: Array.isArray(input.lifeguards) ? input.lifeguards : [], requests: Array.isArray(input.requests) ? input.requests : [], shifts: Array.isArray(input.shifts) ? input.shifts : blankState().shifts };
 }
-
-function startOfWeekIso(offsetDays = 0) {
-  const d = new Date();
-  d.setHours(12, 0, 0, 0);
-  d.setDate(d.getDate() + offsetDays);
-  d.setDate(d.getDate() - d.getDay());
-  return d.toISOString().slice(0, 10);
-}
-
-function endFromStart(start: string, days: number) {
-  const d = new Date(`${start}T12:00:00`);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-function guardList(shift: Shift | undefined) {
-  if (!shift) return "OPEN";
-  const names = shift.assignments.map((a) => a.name.trim()).filter(Boolean);
-  return names.length ? names.join(", ") : "OPEN";
-}
-
-function shiftText(shift: Shift | undefined) {
-  if (!shift) return "OPEN - 3 needed";
-  const needed = openCount(shift);
-  return `${guardList(shift)}${needed > 0 ? ` - ${needed} needed` : " - Full"}`;
-}
-
-function rowsBetween(shifts: Shift[], start: string, end: string): ReportRow[] {
-  const byDate = new Map<string, ReportRow>();
-  shifts.filter((s) => s.date >= start && s.date <= end).forEach((s) => {
-    const existing = byDate.get(s.date) || { dateIso: s.date, date: longDate(s.date), am: "", pm: "", open: 0 };
-    if (s.type === "AM") existing.am = shiftText(s);
-    if (s.type === "PM") existing.pm = shiftText(s);
-    existing.open += openCount(s);
-    byDate.set(s.date, existing);
-  });
-  return Array.from(byDate.values()).sort((a, b) => a.dateIso.localeCompare(b.dateIso));
-}
-
-function cleanPin(value: string) {
-  return value.replace(/\D/g, "").slice(0, LIFEGUARD_PIN_DIGITS);
-}
-
-function sameName(a: string, b: string) {
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
-}
+function startOfWeekIso(offsetDays = 0) { const d = new Date(); d.setHours(12,0,0,0); d.setDate(d.getDate()+offsetDays); d.setDate(d.getDate()-d.getDay()); return d.toISOString().slice(0,10); }
+function endFromStart(start: string, days: number) { const d = new Date(`${start}T12:00:00`); d.setDate(d.getDate()+days); return d.toISOString().slice(0,10); }
+function sameName(a: string, b: string) { return a.trim().toLowerCase() === b.trim().toLowerCase(); }
+function cleanPin(value: string) { return value.replace(/\D/g, "").slice(0, PIN_DIGITS); }
+function guardList(shift?: Shift) { const names = shift?.assignments.map((a) => a.name.trim()).filter(Boolean) || []; return names.length ? names.join(", ") : "OPEN"; }
+function shiftText(shift?: Shift) { if (!shift) return "OPEN - 3 needed"; const needed = openCount(shift); return `${guardList(shift)}${needed > 0 ? ` - ${needed} needed` : " - Full"}`; }
+function rowsBetween(shifts: Shift[], start: string, end: string): ReportRow[] { const byDate = new Map<string, ReportRow>(); shifts.filter((s)=>s.date>=start&&s.date<=end).forEach((s)=>{ const row = byDate.get(s.date) || { dateIso:s.date, date:longDate(s.date), am:"", pm:"", open:0 }; if(s.type==="AM") row.am=shiftText(s); else row.pm=shiftText(s); row.open += openCount(s); byDate.set(s.date,row); }); return Array.from(byDate.values()).sort((a,b)=>a.dateIso.localeCompare(b.dateIso)); }
 
 export default function Home() {
   const [state, setState] = useState<AppState>(() => blankState());
@@ -70,10 +31,8 @@ export default function Home() {
   const [lifeguardPin, setLifeguardPin] = useState("");
   const [loginError, setLoginError] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
-  const [filter, setFilter] = useState<"all" | "open" | "mine">("open");
   const [pin, setPin] = useState("");
   const [adminAuthed, setAdminAuthed] = useState(false);
-  const [adminDate, setAdminDate] = useState(() => todayIso());
   const [reportStart, setReportStart] = useState(() => todayIso());
   const [reportEnd, setReportEnd] = useState(() => addDaysIso(14));
   const [manualName, setManualName] = useState("");
@@ -83,286 +42,62 @@ export default function Home() {
   const [guardForm, setGuardForm] = useState<{ id: string; name: string; pin: string }>({ id: "", name: "", pin: "" });
 
   async function loadShared() {
-    try {
-      const res = await fetch("/api/state", { cache: "no-store" });
-      if (!res.ok) throw new Error("Shared state unavailable");
-      const data = await res.json();
-      const next = normalizeState(data.state as AppState);
-      setState(next);
-      setShared(Boolean(data.shared));
-      setSyncStatus(data.shared ? "Shared database connected" : "Testing mode: browser storage only");
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) setState(normalizeState(JSON.parse(saved) as AppState));
-      setSyncStatus("Offline fallback: browser storage only");
-    }
+    try { const res = await fetch("/api/state", { cache: "no-store" }); if (!res.ok) throw new Error("state"); const data = await res.json(); const next = normalizeState(data.state as AppState); setState(next); setShared(Boolean(data.shared)); setSyncStatus(data.shared ? "Shared database connected" : "Testing mode: browser storage only"); localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); }
+    catch { const saved = localStorage.getItem(STORAGE_KEY); if (saved) setState(normalizeState(JSON.parse(saved) as AppState)); setSyncStatus("Offline fallback: browser storage only"); }
   }
-
-  async function persist(nextInput: AppState) {
-    const next = normalizeState({ ...nextInput, updatedAt: new Date().toISOString() });
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    setState(next);
-    try {
-      const res = await fetch("/api/state", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state: next }) });
-      const data = await res.json();
-      if (data.ok) {
-        setShared(Boolean(data.shared));
-        setSyncStatus(data.shared ? "Shared database connected" : "Testing mode: browser storage only");
-      }
-    } catch {
-      setSyncStatus("Offline fallback: browser storage only");
-    }
+  async function persist(nextInput: AppState, replace = false) {
+    const next = normalizeState({ ...nextInput, updatedAt: new Date().toISOString() }); setState(next); localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    try { const res = await fetch("/api/state", { method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ state: next, replace }) }); const data = await res.json(); if (data.ok) { const saved = normalizeState(data.state as AppState); setState(saved); setShared(Boolean(data.shared)); setSyncStatus(data.shared ? "Shared database connected" : "Testing mode: browser storage only"); } }
+    catch { setSyncStatus("Offline fallback: browser storage only"); }
   }
-
   useEffect(() => { void loadShared(); }, []);
+  function updateState(updater: (current: AppState) => AppState, replace = false) { void persist(updater(state), replace); }
 
   const selectedName = name.trim();
-  const statusText = `${syncStatus} · ${shared ? "shared" : "local"}`;
   const selectableEnd = addDaysIso(SCHEDULE_LIMIT_DAYS);
-  const twoWeekSchedule = useMemo(() => state.shifts.filter((shift) => shift.date >= todayIso() && shift.date <= selectableEnd).sort((a, b) => a.id.localeCompare(b.id)), [state.shifts, selectableEnd]);
-  const twoWeekDates = useMemo(() => Array.from(new Set(twoWeekSchedule.map((shift) => shift.date))), [twoWeekSchedule]);
-  const openShifts = useMemo(() => state.shifts.filter((shift) => shift.date >= todayIso() && shift.date <= selectableEnd).slice(0, 80), [state.shifts, selectableEnd]);
-  const myRequests = useMemo(() => state.requests.filter((r) => r.name.toLowerCase() === selectedName.toLowerCase()), [state.requests, selectedName]);
-  const pendingRequests = state.requests.filter((r) => r.status === "pending");
+  const twoWeekDates = useMemo(() => Array.from(new Set(state.shifts.filter((s)=>s.date>=todayIso()&&s.date<=selectableEnd).map((s)=>s.date))).sort(), [state.shifts, selectableEnd]);
+  const myRequests = useMemo(() => state.requests.filter((r)=>sameName(r.name, selectedName)), [state.requests, selectedName]);
+  const pendingRequests = state.requests.filter((r)=>r.status==="pending");
   const reportRows = rowsBetween(state.shifts, reportStart, reportEnd);
   const currentStart = startOfWeekIso(scheduleWindow === "current" ? 0 : 7);
   const currentEnd = endFromStart(currentStart, 6);
   const adminRows = rowsBetween(state.shifts, currentStart, currentEnd);
-  const weeklyShiftCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    state.shifts.filter((s) => s.date >= currentStart && s.date <= currentEnd).forEach((s) => {
-      s.assignments.forEach((a) => {
-        const clean = a.name.trim();
-        if (clean) counts.set(clean, (counts.get(clean) || 0) + 1);
-      });
-    });
-    return Array.from(counts.entries()).map(([guardName, count]) => ({ guardName, count })).sort((a, b) => b.count - a.count || a.guardName.localeCompare(b.guardName));
-  }, [state.shifts, currentStart, currentEnd]);
+  const weekCounts = useMemo(() => { const m = new Map<string, number>(); state.shifts.filter((s)=>s.date>=currentStart&&s.date<=currentEnd).forEach((s)=>s.assignments.forEach((a)=>m.set(a.name, (m.get(a.name)||0)+1))); return Array.from(m.entries()).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])); }, [state.shifts,currentStart,currentEnd]);
+  const requestCounts = useMemo(() => { const m = new Map<string, number>(); state.requests.forEach((r)=>m.set(r.name, (m.get(r.name)||0)+1)); return Array.from(m.entries()).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])); }, [state.requests]);
 
-  function updateState(updater: (current: AppState) => AppState) { void persist(updater(state)); }
+  function findShift(date: string, type: ShiftType) { return state.shifts.find((s)=>s.date===date && s.type===type); }
+  function alreadyAssigned(shift: Shift, guardName: string) { return shift.assignments.some((a)=>sameName(a.name, guardName)); }
+  function assignedSameDay(shift: Shift, guardName: string, current = state) { return current.shifts.some((s)=>s.date===shift.date && s.id!==shift.id && s.assignments.some((a)=>sameName(a.name, guardName))); }
+  function submitName() { const cleanName = selectedName; const cleanGuardPin = cleanPin(lifeguardPin); const match = state.lifeguards.find((g)=>sameName(g.name, cleanName) && g.pin===cleanGuardPin); if(!cleanName || cleanGuardPin.length!==PIN_DIGITS) { setLoginError("Enter your first name and six digit PIN."); return; } if(!match) { setLoginError("That name and PIN do not match an active lifeguard record. Ask Hollie/admin to add or correct your PIN."); return; } setName(match.name); setLoginError(""); setView("select"); }
+  function toggleShift(shiftId: string) { const shift = state.shifts.find((s)=>s.id===shiftId); if(!shift || shift.date<todayIso() || shift.date>selectableEnd) return; setSelected((cur)=>cur.includes(shiftId)?cur.filter((id)=>id!==shiftId):[...cur, shiftId]); }
+  function submitRequests() { if(!selectedName || !selected.length) return; const existing = new Set(state.requests.filter((r)=>sameName(r.name, selectedName) && r.status!=="rejected").map((r)=>r.shiftId)); const now = new Date().toISOString(); const newRequests = selected.filter((shiftId)=>!existing.has(shiftId)).map((shiftId)=>({ id:`${shiftId}-${selectedName}-${Date.now()}-${Math.random().toString(16).slice(2)}`, shiftId, name:selectedName, status:"pending" as const, createdAt:now })); if(newRequests.length) updateState((cur)=>({...cur, requests:[...cur.requests, ...newRequests]})); setSelected([]); setView("confirm"); }
+  function approveRequest(request: RequestItem) { updateState((cur)=>{ const shift = cur.shifts.find((s)=>s.id===request.shiftId); if(!shift || alreadyAssigned(shift, request.name) || assignedSameDay(shift, request.name, cur)) return cur; return { ...cur, shifts: cur.shifts.map((s)=>s.id===request.shiftId ? { ...s, assignments:[...s.assignments,{name:request.name, source:"request" as const}] } : s), requests: cur.requests.map((r)=>r.id===request.id ? {...r,status:"approved" as const} : r) }; }); }
+  function rejectRequest(request: RequestItem) { updateState((cur)=>({...cur, requests:cur.requests.map((r)=>r.id===request.id ? {...r,status:"rejected" as const} : r)})); }
+  function approveAll() { updateState((cur)=>{ let shifts = cur.shifts.map((s)=>({...s, assignments:[...s.assignments]})); const requests = cur.requests.map((r)=>({...r})); for (const r of requests.filter((x)=>x.status==="pending")) { const idx = shifts.findIndex((s)=>s.id===r.shiftId); const shift = shifts[idx]; if(!shift || alreadyAssigned(shift,r.name) || shifts.some((s)=>s.date===shift.date && s.id!==shift.id && s.assignments.some((a)=>sameName(a.name,r.name)))) continue; shifts[idx] = {...shift, assignments:[...shift.assignments,{name:r.name, source:"request" as const}]}; r.status = "approved"; } return {...cur, shifts, requests}; }); }
+  function addManual(shiftId: string) { const clean = manualName.trim(); if(!clean) return; updateState((cur)=>({...cur, shifts:cur.shifts.map((s)=>s.id===shiftId && !alreadyAssigned(s,clean) && !assignedSameDay(s,clean,cur) ? {...s, assignments:[...s.assignments,{name:clean, source:"manual" as const}]} : s)})); setManualName(""); }
+  function removeAssignment(shiftId: string, oldName: string) { updateState((cur)=>({...cur, shifts:cur.shifts.map((s)=>s.id===shiftId ? {...s, assignments:s.assignments.filter((a)=>a.name!==oldName)} : s)})); }
+  function saveEdit() { if(!edit || !edit.value.trim()) return; updateState((cur)=>({...cur, shifts:cur.shifts.map((s)=>s.id===edit.shiftId ? {...s, assignments:s.assignments.map((a)=>a.name===edit.oldName ? {...a,name:edit.value.trim()} : a)} : s)})); setEdit(null); }
+  function saveLifeguard() { const cleanName = guardForm.name.trim(); const cleanGuardPin = cleanPin(guardForm.pin); if(!cleanName || cleanGuardPin.length!==PIN_DIGITS) return; updateState((cur)=>{ const guard:Lifeguard={id:guardForm.id || `${cleanName.toLowerCase()}-${Date.now()}`, name:cleanName, pin:cleanGuardPin}; const exists=cur.lifeguards.some((g)=>g.id===guard.id); return {...cur, lifeguards: exists ? cur.lifeguards.map((g)=>g.id===guard.id?guard:g) : [...cur.lifeguards, guard]}; }); setGuardForm({id:"",name:"",pin:""}); }
+  function deleteLifeguard(id: string) { updateState((cur)=>({...cur, lifeguards:cur.lifeguards.filter((g)=>g.id!==id)})); }
+  function resetAll() { if(resetText!=="RESET SCHEDULE") return; void persist({...blankState(), lifeguards:state.lifeguards}, true); setResetText(""); }
 
-  function submitName() {
-    const cleanName = selectedName;
-    const cleanGuardPin = cleanPin(lifeguardPin);
-    const match = state.lifeguards.find((g) => g.name.trim().toLowerCase() === cleanName.toLowerCase() && g.pin === cleanGuardPin);
-    if (!cleanName || cleanGuardPin.length !== LIFEGUARD_PIN_DIGITS) {
-      setLoginError("Enter your first name and six digit PIN.");
-      return;
-    }
-    if (!match) {
-      setLoginError("That name and PIN do not match an active lifeguard record. Ask Hollie/admin to add or correct your PIN.");
-      return;
-    }
-    setName(match.name);
-    setLoginError("");
-    setView("select");
-  }
+  function potentialRequestsForShift(shift: Shift) { const seen = new Set<string>(); return state.requests.filter((r)=>r.shiftId===shift.id && !alreadyAssigned(shift,r.name)).sort((a,b)=> (a.status===b.status?b.createdAt.localeCompare(a.createdAt):a.status==="pending"?-1:1)).filter((r)=>{ const k=r.name.toLowerCase(); if(seen.has(k)) return false; seen.add(k); return true; }); }
+  function renderLifeguardShift(shift: Shift) { const requested=myRequests.some((r)=>r.shiftId===shift.id && r.status!=="rejected"); const isSelected=selected.includes(shift.id); const meAssigned=shift.assignments.some((a)=>sameName(a.name, selectedName)); const names=shift.assignments.map((a)=>a.name).filter(Boolean); const coworkers=names.filter((n)=>!sameName(n,selectedName)); return <button key={shift.id} className="shiftBtn" data-selected={isSelected} disabled={requested || meAssigned} onClick={()=>toggleShift(shift.id)}><span className="shiftTitle"><span>{shift.type==="AM"?"Morning":"Afternoon"}</span><span>{shift.start} - {shift.end}</span></span><span className="shiftMeta">Approved: {names.length?names.join(", "):"No one yet"}</span>{meAssigned?<span className="shiftMeta">You work this shift{coworkers.length?` with ${coworkers.join(", ")}`:""}.</span>:null}<span>{meAssigned?<span className="badge badgeFull">You work</span>:null} <span className="badge badgeOpen">{openCount(shift)} open</span> {requested?<span className="badge badgePending">Requested</span>:null} {isSelected?<span className="badge badgePending">Selected</span>:null}</span></button>; }
+  function renderAdminCell(date:string,type:ShiftType) { const shift=findShift(date,type); if(!shift) return <span className="small">No shift</span>; const potentials=potentialRequestsForShift(shift); return <div className="adminShiftCell"><div className="cellTime">{shift.start} - {shift.end}</div><div className="nameWrap">{shift.assignments.length===0?<span className="openText">OPEN</span>:null}{shift.assignments.map((a)=><button className="namePill" key={`${shift.id}-${a.name}`} onClick={()=>setEdit({shiftId:shift.id, oldName:a.name, value:a.name})}>{a.name}</button>)}</div><span className={openCount(shift)>0?"badge badgeOpen":"badge badgeFull"}>{openCount(shift)>0?`${openCount(shift)} open`:"Full"}</span>{potentials.length?<div className="nameWrap">{potentials.map((r)=>{ const blocked=assignedSameDay(shift,r.name); return <button key={r.id} className="namePill" disabled={blocked} onClick={()=>approveRequest(r)} style={{opacity:.58,background:"#f1f5f9",borderStyle:"dashed",color:"#233944"}}>{r.name} · {r.status}</button>; })}</div>:null}</div>; }
+  function exportReport() { const rows=rowsBetween(state.shifts, reportStart, reportEnd); const csv=["Serenity Shores Pool Schedule",`${longDate(reportStart)} through ${longDate(reportEnd)}`,"","Date,AM 10-3:30,PM 3:30-10,Open Spots",...rows.map((r)=>[r.date,r.am,r.pm,String(r.open)].map(csvSafe).join(","))].join("\n"); const blob=new Blob([csv],{type:"text/csv;charset=utf-8"}); const url=URL.createObjectURL(blob); const link=document.createElement("a"); link.href=url; link.download=`serenity-shores-pool-schedule-${reportStart}-to-${reportEnd}.csv`; link.click(); URL.revokeObjectURL(url); }
 
-  function assignedSameDay(shift: Shift, guardName: string, currentState = state) {
-    return currentState.shifts.some((s) => s.date === shift.date && s.id !== shift.id && s.assignments.some((a) => sameName(a.name, guardName)));
-  }
-
-  function alreadyAssigned(shift: Shift, guardName: string) {
-    return shift.assignments.some((a) => sameName(a.name, guardName));
-  }
-
-  function toggleShift(shiftId: string) {
-    const shift = state.shifts.find((s) => s.id === shiftId);
-    if (!shift || openCount(shift) <= 0) return;
-    if (shift.date < todayIso() || shift.date > selectableEnd) return;
-    setSelected((current) => (current.includes(shiftId) ? current.filter((id) => id !== shiftId) : [...current, shiftId]));
-  }
-
-  function submitRequests() {
-    if (!selectedName || selected.length === 0) return;
-    const validSelected = selected.filter((shiftId) => {
-      const shift = state.shifts.find((s) => s.id === shiftId);
-      return Boolean(shift && shift.date >= todayIso() && shift.date <= selectableEnd && openCount(shift) > 0);
-    });
-    if (validSelected.length === 0) { setSelected([]); return; }
-    const now = new Date().toISOString();
-    const newRequests: RequestItem[] = validSelected.map((shiftId) => ({ id: `${shiftId}-${selectedName}-${Date.now()}-${Math.random().toString(16).slice(2)}`, shiftId, name: selectedName, status: "pending", createdAt: now }));
-    updateState((current) => ({ ...current, requests: [...current.requests, ...newRequests] }));
-    setSelected([]);
-    setView("confirm");
-  }
-
-  function approveRequest(request: RequestItem) {
-    updateState((current) => {
-      const shift = current.shifts.find((s) => s.id === request.shiftId);
-      if (!shift || openCount(shift) <= 0 || alreadyAssigned(shift, request.name) || assignedSameDay(shift, request.name, current)) return current;
-      return { ...current, shifts: current.shifts.map((s) => s.id === request.shiftId ? { ...s, assignments: [...s.assignments, { name: request.name, source: "request" as const }] } : s), requests: current.requests.map((r) => (r.id === request.id ? { ...r, status: "approved" as const } : r)) };
-    });
-  }
-
-  function rejectRequest(request: RequestItem) { updateState((current) => ({ ...current, requests: current.requests.map((r) => (r.id === request.id ? { ...r, status: "rejected" as const } : r)) })); }
-
-  function addManual(shiftId: string) {
-    const clean = manualName.trim();
-    if (!clean) return;
-    updateState((current) => ({ ...current, shifts: current.shifts.map((s) => s.id === shiftId && openCount(s) > 0 && !alreadyAssigned(s, clean) && !assignedSameDay(s, clean, current) ? { ...s, assignments: [...s.assignments, { name: clean, source: "manual" as const }] } : s) }));
-    setManualName("");
-  }
-
-  function removeAssignment(shiftId: string, oldName: string) { updateState((current) => ({ ...current, shifts: current.shifts.map((s) => s.id === shiftId ? { ...s, assignments: s.assignments.filter((a) => a.name !== oldName) } : s) })); }
-
-  function saveEdit() {
-    if (!edit || !edit.value.trim()) return;
-    updateState((current) => ({ ...current, shifts: current.shifts.map((s) => s.id === edit.shiftId ? { ...s, assignments: s.assignments.map((a) => (a.name === edit.oldName ? { ...a, name: edit.value.trim() } : a)) } : s) }));
-    setEdit(null);
-  }
-
-  function saveLifeguard() {
-    const cleanName = guardForm.name.trim();
-    const cleanGuardPin = cleanPin(guardForm.pin);
-    if (!cleanName || cleanGuardPin.length !== LIFEGUARD_PIN_DIGITS) return;
-    updateState((current) => {
-      const guard: Lifeguard = { id: guardForm.id || `${cleanName.toLowerCase()}-${Date.now()}`, name: cleanName, pin: cleanGuardPin };
-      const exists = current.lifeguards.some((g) => g.id === guard.id);
-      return { ...current, lifeguards: exists ? current.lifeguards.map((g) => g.id === guard.id ? guard : g) : [...current.lifeguards, guard] };
-    });
-    setGuardForm({ id: "", name: "", pin: "" });
-  }
-
-  function deleteLifeguard(id: string) { updateState((current) => ({ ...current, lifeguards: current.lifeguards.filter((g) => g.id !== id) })); }
-
-  function resetAll() {
-    if (resetText !== "RESET SCHEDULE") return;
-    const next = blankState();
-    void persist({ ...next, lifeguards: state.lifeguards });
-    setResetText("");
-  }
-
-  function exportReport() {
-    const rows = rowsBetween(state.shifts, reportStart, reportEnd);
-    const csv = ["Serenity Shores Pool Schedule", `${longDate(reportStart)} through ${longDate(reportEnd)}`, "", "Date,AM 10-3:30,PM 3:30-10,Open Spots", ...rows.map((r) => [r.date, r.am, r.pm, String(r.open)].map(csvSafe).join(","))].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `serenity-shores-pool-schedule-${reportStart}-to-${reportEnd}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function exportPdf() {
-    const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
-    const pdf = await PDFDocument.create();
-    const font = await pdf.embedFont(StandardFonts.Helvetica);
-    const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-    const pageWidth = 792, pageHeight = 612, margin = 32;
-    const cols = { date: { x: margin, w: 145 }, am: { x: 182, w: 240 }, pm: { x: 432, w: 240 }, open: { x: 682, w: 78 } };
-    const rowFontSize = 8, lineHeight = 10;
-    let page = pdf.addPage([pageWidth, pageHeight]);
-    let y = pageHeight - margin;
-    function wrapText(text: string, maxWidth: number, size = rowFontSize) {
-      const words = text.replace(/\s+/g, " ").trim().split(" ");
-      const lines: string[] = [];
-      let current = "";
-      for (const word of words) {
-        const test = current ? `${current} ${word}` : word;
-        if (font.widthOfTextAtSize(test, size) <= maxWidth) current = test;
-        else { if (current) lines.push(current); current = word; }
-      }
-      if (current) lines.push(current);
-      return lines.length ? lines : [""];
-    }
-    function drawTextLines(lines: string[], x: number, startY: number, size = rowFontSize) { lines.forEach((line, index) => page.drawText(line, { x, y: startY - index * lineHeight, size, font, color: rgb(0.03, 0.16, 0.22) })); }
-    function drawCell(x: number, yBottom: number, width: number, height: number, fill = false) { page.drawRectangle({ x, y: yBottom, width, height, color: fill ? rgb(0.92, 0.96, 0.97) : undefined, borderColor: rgb(0, 0, 0), borderWidth: 0.45 }); }
-    function drawPageHeader() {
-      y = pageHeight - margin;
-      page.drawText("Serenity Shores Pool Schedule", { x: margin, y, size: 18, font: bold, color: rgb(0.03, 0.16, 0.22) });
-      y -= 18;
-      page.drawText(`${longDate(reportStart)} through ${longDate(reportEnd)}`, { x: margin, y, size: 10, font, color: rgb(0.22, 0.34, 0.4) });
-      y -= 18;
-      const headerHeight = 18;
-      drawCell(cols.date.x, y - headerHeight + 4, cols.date.w, headerHeight, true); drawCell(cols.am.x, y - headerHeight + 4, cols.am.w, headerHeight, true); drawCell(cols.pm.x, y - headerHeight + 4, cols.pm.w, headerHeight, true); drawCell(cols.open.x, y - headerHeight + 4, cols.open.w, headerHeight, true);
-      page.drawText("Date", { x: cols.date.x + 5, y: y - 9, size: 8, font: bold, color: rgb(0, 0, 0) }); page.drawText("AM 10-3:30", { x: cols.am.x + 5, y: y - 9, size: 8, font: bold, color: rgb(0, 0, 0) }); page.drawText("PM 3:30-10", { x: cols.pm.x + 5, y: y - 9, size: 8, font: bold, color: rgb(0, 0, 0) }); page.drawText("Open", { x: cols.open.x + 5, y: y - 9, size: 8, font: bold, color: rgb(0, 0, 0) });
-      y -= headerHeight;
-    }
-    drawPageHeader();
-    reportRows.forEach((row, index) => {
-      const dateLines = wrapText(row.date, cols.date.w - 10), amLines = wrapText(row.am || "OPEN - 3 needed", cols.am.w - 10), pmLines = wrapText(row.pm || "OPEN - 3 needed", cols.pm.w - 10);
-      const height = Math.max(dateLines.length, amLines.length, pmLines.length, 1) * lineHeight + 10;
-      if (y - height < margin) { page = pdf.addPage([pageWidth, pageHeight]); drawPageHeader(); }
-      const yBottom = y - height + 4, fill = index % 2 === 0;
-      drawCell(cols.date.x, yBottom, cols.date.w, height, fill); drawCell(cols.am.x, yBottom, cols.am.w, height, fill); drawCell(cols.pm.x, yBottom, cols.pm.w, height, fill); drawCell(cols.open.x, yBottom, cols.open.w, height, fill);
-      drawTextLines(dateLines, cols.date.x + 5, y - 8); drawTextLines(amLines, cols.am.x + 5, y - 8); drawTextLines(pmLines, cols.pm.x + 5, y - 8);
-      page.drawText(String(row.open), { x: cols.open.x + 5, y: y - 8, size: 9, font: bold, color: rgb(0.03, 0.16, 0.22) });
-      y -= height;
-    });
-    const bytes = await pdf.save();
-    const arrayBuffer = new ArrayBuffer(bytes.length);
-    new Uint8Array(arrayBuffer).set(bytes);
-    const blob = new Blob([arrayBuffer], { type: "application/pdf" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `serenity-shores-pool-schedule-${reportStart}-to-${reportEnd}.pdf`;
-    link.click();
-    URL.revokeObjectURL(url);
-  }
-
-  function renderShiftButton(shift: Shift) {
-    const requested = myRequests.some((r) => r.shiftId === shift.id && r.status !== "rejected");
-    const isSelected = selected.includes(shift.id);
-    const isMine = requested || isSelected;
-    if (filter === "open" && openCount(shift) <= 0) return null;
-    if (filter === "mine" && !isMine) return null;
-    return <button key={shift.id} className="shiftBtn" data-selected={isSelected} disabled={openCount(shift) <= 0 || requested} onClick={() => toggleShift(shift.id)}><span className="shiftTitle"><span>{shift.type === "AM" ? "Morning" : "Afternoon"}</span><span>{shift.start} - {shift.end}</span></span><span className="shiftMeta">{shift.assignments.length}/{shift.required} scheduled · {openCount(shift)} needed</span><span>{openCount(shift) > 0 ? <span className="badge badgeOpen">Open</span> : <span className="badge badgeFull">Full</span>} {requested ? <span className="badge badgePending">Requested</span> : null} {isSelected ? <span className="badge badgePending">Selected</span> : null}</span></button>;
-  }
-
-  function renderLifeguardScheduleShift(shift: Shift) {
-    const requested = myRequests.some((r) => r.shiftId === shift.id && r.status !== "rejected");
-    const isSelected = selected.includes(shift.id);
-    const meAssigned = shift.assignments.some((a) => sameName(a.name, selectedName));
-    const names = shift.assignments.map((a) => a.name.trim()).filter(Boolean);
-    const coworkers = names.filter((n) => !sameName(n, selectedName));
-    const canRequest = openCount(shift) > 0 && !requested && !meAssigned;
-    return <button key={shift.id} className="shiftBtn" data-selected={isSelected} disabled={!canRequest && !isSelected} onClick={() => toggleShift(shift.id)}><span className="shiftTitle"><span>{shift.type === "AM" ? "Morning" : "Afternoon"}</span><span>{shift.start} - {shift.end}</span></span><span className="shiftMeta">Approved: {names.length ? names.join(", ") : "No one yet"}</span>{meAssigned ? <span className="shiftMeta">You work this shift{coworkers.length ? ` with ${coworkers.join(", ")}` : ""}.</span> : null}<span>{meAssigned ? <span className="badge badgeFull">You work</span> : null} {openCount(shift) > 0 ? <span className="badge badgeOpen">{openCount(shift)} open</span> : <span className="badge badgeFull">Full</span>} {requested ? <span className="badge badgePending">Requested</span> : null} {isSelected ? <span className="badge badgePending">Selected</span> : null}</span></button>;
-  }
-
-  function findShift(date: string, type: ShiftType) { return state.shifts.find((s) => s.date === date && s.type === type); }
-
-  function potentialRequestsForShift(shift: Shift) {
-    const seen = new Set<string>();
-    const statusOrder: Record<RequestItem["status"], number> = { pending: 0, rejected: 1, approved: 2 };
-    return state.requests
-      .filter((r) => r.shiftId === shift.id && !alreadyAssigned(shift, r.name))
-      .sort((a, b) => statusOrder[a.status] - statusOrder[b.status] || b.createdAt.localeCompare(a.createdAt))
-      .filter((r) => {
-        const key = r.name.trim().toLowerCase();
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-  }
-
-  function renderAdminShiftCell(date: string, type: ShiftType) {
-    const shift = findShift(date, type);
-    if (!shift) return <span className="small">No shift</span>;
-    const potentials = potentialRequestsForShift(shift);
-    return <div className="adminShiftCell"><div className="cellTime">{shift.start} - {shift.end}</div><div className="nameWrap">{shift.assignments.length === 0 ? <span className="openText">OPEN</span> : null}{shift.assignments.map((a) => <button className="namePill" key={`${shift.id}-${a.name}`} onClick={() => setEdit({ shiftId: shift.id, oldName: a.name, value: a.name })}>{a.name}</button>)}</div><span className={openCount(shift) > 0 ? "badge badgeOpen" : "badge badgeFull"}>{openCount(shift) > 0 ? `${openCount(shift)} open` : "Full"}</span>{potentials.length ? <div className="nameWrap" aria-label="Potential alternates">{potentials.map((request) => { const blocked = openCount(shift) <= 0 || assignedSameDay(shift, request.name); const label = request.status === "pending" ? "pending" : request.status === "rejected" ? "denied" : "available"; return <button className="namePill" key={`${shift.id}-potential-${request.id}`} disabled={blocked} onClick={() => approveRequest(request)} title={blocked ? "Remove an approved guard first, or this lifeguard is already scheduled in the other shift that day." : "Add this available lifeguard to the approved schedule."} style={{ opacity: 0.58, background: "#f1f5f9", borderStyle: "dashed", color: "#233944" }}>{request.name} · {label}</button>; })}</div> : null}</div>;
-  }
-
-  return <main className="appShell">
-    <div className="topStrip">Serenity Shores pool · Lifeguard schedule</div>
-    <header className="header"><div className="brand"><div className="brandText">Lifeguard Schedule</div></div><button className="adminBtn" onClick={() => setView(adminAuthed ? "admin" : "adminPin")}>Admin</button></header>
-    <section className="main"><p className="small" style={{ marginTop: 0 }}>{statusText}</p>
-      {view === "entry" ? <div className="card hero stack"><span className="kicker">Lifeguard check-in</span><h1>Help fill the pool schedule.</h1><p className="lead">Enter your first name and your six digit PIN, then select ALL SHIFTS YOU ARE AVAILABLE TO COVER. (You will not get all of the shifts you select, and no one will have a double shift).</p><input className="input" placeholder="First name" value={name} onChange={(e) => setName(e.target.value)} /><input className="input" inputMode="numeric" placeholder="Six digit PIN" value={lifeguardPin} onChange={(e) => setLifeguardPin(cleanPin(e.target.value))} onKeyDown={(e) => e.key === "Enter" && submitName()} />{loginError ? <p className="small" style={{ color: "#b42318" }}>{loginError}</p> : null}<button className="primaryBtn" onClick={submitName}>See Open Shifts</button><p className="small">Lifeguards can request shifts from today through {niceDate(selectableEnd)}. New shifts unlock automatically each day. Morning is 10:00 AM-3:30 PM. Afternoon is 3:30 PM-10:00 PM.</p></div> : null}
-      {view === "select" ? <div className="stack"><div className="card stack"><div className="row"><div><h2>Hi, {selectedName}</h2><p className="small">Select all shifts you are available to cover through {niceDate(selectableEnd)}. You can select both morning and afternoon on the same day if you are available all day. Hollie/admin will choose the final approved shift, and nobody will be assigned a double shift.</p></div><button className="ghostBtn" onClick={() => setView("entry")}>Change</button></div><div className="tabs"><button className="tab" data-active={filter === "open"} onClick={() => setFilter("open")}>Open</button><button className="tab" data-active={filter === "all"} onClick={() => setFilter("all")}>All</button><button className="tab" data-active={filter === "mine"} onClick={() => setFilter("mine")}>Mine</button></div></div><div className="card stack"><div><h3>Approved schedule: next two weeks</h3><p className="small">This shows the current approved schedule, who you will work with, and open shifts you can request. Tap any open AM or PM shift you are available for, including both shifts on the same day if you are available all day.</p></div>{twoWeekDates.map((date) => <div className="shiftCard" key={`preview-${date}`}><div className="dateLine">{niceDate(date)}</div><div className="shiftGrid">{["AM", "PM"].map((type) => { const shift = findShift(date, type as ShiftType); return shift ? renderLifeguardScheduleShift(shift) : null; })}</div></div>)}</div>{openShifts.map((shift, index, all) => { const prev = all[index - 1]; const showDate = !prev || prev.date !== shift.date; return <div key={shift.id} className={showDate ? "shiftCard" : ""} style={showDate ? undefined : { display: "contents" }}>{showDate ? <div className="dateLine">{niceDate(shift.date)}</div> : null}<div className="shiftGrid">{renderShiftButton(shift)}</div></div>; })}<div className="stickySubmit"><div className="stickySubmitInner"><button className="primaryBtn" disabled={selected.length === 0} onClick={submitRequests}>Submit {selected.length || ""} shift request{selected.length === 1 ? "" : "s"}</button><span className="small">Hollie/admin must approve before names appear on the final schedule.</span></div></div></div> : null}
-      {view === "confirm" ? <div className="card hero stack"><span className="kicker">Submitted</span><h1>Thank you.</h1><p className="lead">Your available shifts were sent to admin for approval.</p><button className="primaryBtn" onClick={() => setView("entry")}>Done</button></div> : null}
-      {view === "adminPin" ? <div className="card hero stack"><span className="kicker">Admin access</span><h1>Enter code.</h1><input className="input" inputMode="numeric" placeholder="Admin code" value={pin} onChange={(e) => setPin(e.target.value)} /><button className="primaryBtn" onClick={() => { if (pin === ADMIN_CODE) { setAdminAuthed(true); setView("admin"); } }}>Open Admin</button><button className="ghostBtn" onClick={() => setView("entry")}>Back</button></div> : null}
-      {view === "admin" ? <div className="stack"><div className="card stack"><span className="kicker">Admin dashboard</span><h2>Schedule control</h2><div className="panelGrid"><div className="stat"><div className="statNum">{pendingRequests.length}</div><div className="statLabel">Pending</div></div><div className="stat"><div className="statNum">{state.lifeguards.length}</div><div className="statLabel">Lifeguards</div></div><div className="stat"><div className="statNum">{state.shifts.reduce((n, s) => n + openCount(s), 0)}</div><div className="statLabel">Open spots</div></div></div></div>
-        <div className="card stack"><h3>Lifeguards and PINs</h3><p className="small">Add or edit each lifeguard here. Lifeguards must enter their first name and matching six digit PIN before requesting shifts.</p><input className="input" placeholder="Lifeguard first name" value={guardForm.name} onChange={(e) => setGuardForm({ ...guardForm, name: e.target.value })} /><input className="input" inputMode="numeric" placeholder="Six digit PIN" value={guardForm.pin} onChange={(e) => setGuardForm({ ...guardForm, pin: cleanPin(e.target.value) })} /><div className="actions"><button className="primaryBtn" onClick={saveLifeguard}>{guardForm.id ? "Save Lifeguard" : "Add Lifeguard"}</button>{guardForm.id ? <button className="ghostBtn" onClick={() => setGuardForm({ id: "", name: "", pin: "" })}>Cancel</button> : null}</div><table className="table"><thead><tr><th>Name</th><th>PIN</th><th>Action</th></tr></thead><tbody>{state.lifeguards.map((g) => <tr key={g.id}><td>{g.name}</td><td>{g.pin}</td><td><div className="actions"><button className="secondaryBtn" onClick={() => setGuardForm(g)}>Edit</button><button className="dangerBtn" onClick={() => deleteLifeguard(g.id)}>Delete</button></div></td></tr>)}</tbody></table></div>
-        <div className="card stack"><div className="row"><div><h3>Current and next schedule</h3><p className="small">Tap an approved name to edit or remove it. Grey dashed names are lifeguards who selected that shift but are not on the final schedule. They stay visible here for quick swaps, but they do not appear in PDF/CSV reports unless approved.</p></div><div className="tabs"><button className="tab" data-active={scheduleWindow === "current"} onClick={() => setScheduleWindow("current")}>Current</button><button className="tab" data-active={scheduleWindow === "next"} onClick={() => setScheduleWindow("next")}>Next</button></div></div><table className="table scheduleTable"><thead><tr><th>Date</th><th>AM</th><th>PM</th></tr></thead><tbody>{adminRows.map((row) => <tr key={row.dateIso}><td>{row.date}</td><td>{renderAdminShiftCell(row.dateIso, "AM")}</td><td>{renderAdminShiftCell(row.dateIso, "PM")}</td></tr>)}</tbody></table><div className="stack"><h3>Shift count for this week</h3><p className="small">Approved shifts from {longDate(currentStart)} through {longDate(currentEnd)}. This updates when Hollie/admin approves, edits, or removes names.</p>{weeklyShiftCounts.length === 0 ? <p className="small">No approved shifts in this week yet.</p> : <table className="table"><thead><tr><th>Lifeguard</th><th>Approved shifts</th></tr></thead><tbody>{weeklyShiftCounts.map((row) => <tr key={row.guardName}><td>{row.guardName}</td><td>{row.count}</td></tr>)}</tbody></table>}</div></div>
-        <div className="card stack"><h3>Pending requests</h3>{pendingRequests.length === 0 ? <p className="small">No pending requests.</p> : null}{pendingRequests.map((request) => { const shift = state.shifts.find((s) => s.id === request.shiftId); return <div className="shiftCard" key={request.id}><div className="dateLine">{request.name}</div><p className="small">{shift ? `${niceDate(shift.date)} · ${shift.type} · ${shift.start}-${shift.end}` : "Shift not found"}</p><div className="actions"><button className="primaryBtn" onClick={() => approveRequest(request)}>Approve</button><button className="dangerBtn" onClick={() => rejectRequest(request)}>Reject</button></div></div>; })}</div>
-        <div className="card stack"><h3>Manual add</h3><input className="input" placeholder="Name to add" value={manualName} onChange={(e) => setManualName(e.target.value)} /><input className="input" type="date" value={adminDate} onChange={(e) => setAdminDate(e.target.value)} /><div className="actions"><button className="secondaryBtn" onClick={() => { const s = findShift(adminDate, "AM"); if (s) addManual(s.id); }}>Add to AM</button><button className="secondaryBtn" onClick={() => { const s = findShift(adminDate, "PM"); if (s) addManual(s.id); }}>Add to PM</button></div></div>
-        <div className="card stack"><h3>Reports</h3><input className="input" type="date" value={reportStart} onChange={(e) => setReportStart(e.target.value)} /><input className="input" type="date" value={reportEnd} onChange={(e) => setReportEnd(e.target.value)} /><div className="actions"><button className="primaryBtn" onClick={() => void exportPdf()}>Download PDF</button><button className="secondaryBtn" onClick={exportReport}>Download CSV</button></div><table className="table"><thead><tr><th>Date</th><th>AM</th><th>PM</th><th>Open</th></tr></thead><tbody>{reportRows.slice(0, 14).map((r) => <tr key={r.dateIso}><td>{r.date}</td><td>{r.am}</td><td>{r.pm}</td><td>{r.open}</td></tr>)}</tbody></table></div>
-        <div className="card stack"><h3>Reset schedule</h3><p className="small">Type RESET SCHEDULE exactly. This clears requests and assignments but keeps lifeguard names and PINs.</p><input className="input" placeholder="RESET SCHEDULE" value={resetText} onChange={(e) => setResetText(e.target.value)} /><button className="dangerBtn" disabled={resetText !== "RESET SCHEDULE"} onClick={resetAll}>Reset Schedule</button></div>
-      </div> : null}
-    </section>
-    {edit ? <div className="modalBackdrop"><div className="modal stack"><h3>Edit scheduled name</h3><input className="input" value={edit.value} onChange={(e) => setEdit({ ...edit, value: e.target.value })} /><div className="actions"><button className="primaryBtn" onClick={saveEdit}>Save</button><button className="secondaryBtn" onClick={() => removeAssignment(edit.shiftId, edit.oldName)}>Remove</button><button className="ghostBtn" onClick={() => setEdit(null)}>Cancel</button></div></div></div> : null}
-  </main>;
+  return <main className="appShell"><div className="topStrip">Serenity Shores pool · Lifeguard schedule</div><header className="header"><button className="brand" onClick={()=>setView("entry")} style={{border:0,background:"transparent",cursor:"pointer"}}><div className="brandText">Lifeguard Schedule</div></button><button className="adminBtn" onClick={()=>setView(adminAuthed?"admin":"adminPin")}>Admin</button></header><section className="main"><p className="small" style={{marginTop:0}}>{syncStatus} · {shared?"shared":"local"}</p>
+    {view==="entry"?<div className="card hero stack"><span className="kicker">Lifeguard check-in</span><h1>Help fill the pool schedule.</h1><p className="lead">Enter your first name and your six digit PIN, then select ALL SHIFTS YOU ARE AVAILABLE TO COVER. (You will not get all of the shifts you select, and no one will have a double shift).</p><input className="input" placeholder="First name" value={name} onChange={(e)=>setName(e.target.value)} /><input className="input" inputMode="numeric" placeholder="Six digit PIN" value={lifeguardPin} onChange={(e)=>setLifeguardPin(cleanPin(e.target.value))} onKeyDown={(e)=>e.key==="Enter"&&submitName()} />{loginError?<p className="small" style={{color:"#b42318"}}>{loginError}</p>:null}<button className="primaryBtn" onClick={submitName}>See Open Shifts</button><p className="small">Lifeguards can request shifts from today through {niceDate(selectableEnd)}. New shifts unlock automatically each day.</p></div>:null}
+    {view==="select"?<div className="stack"><div className="card stack"><h2>Hi, {selectedName}</h2><p className="small">Select every AM and PM shift you are available to cover. You may select both shifts on the same day if you are available all day. Hollie will approve the final schedule.</p></div><div className="card stack"><h3>Approved schedule: next two weeks</h3>{twoWeekDates.map((date)=><div className="shiftCard" key={date}><div className="dateLine">{niceDate(date)}</div><div className="shiftGrid">{["AM","PM"].map((t)=>{const s=findShift(date,t as ShiftType); return s?renderLifeguardShift(s):null;})}</div></div>)}</div><div className="stickySubmit"><div className="stickySubmitInner"><button className="primaryBtn" disabled={!selected.length} onClick={submitRequests}>Submit {selected.length||""} shift request{selected.length===1?"":"s"}</button><span className="small">Hollie/admin must approve before names appear on the final schedule.</span></div></div></div>:null}
+    {view==="confirm"?<div className="card hero stack"><span className="kicker">Submitted</span><h1>Thank you.</h1><p className="lead">Your available shifts were sent to admin for approval.</p><button className="primaryBtn" onClick={()=>setView("entry")}>Done</button></div>:null}
+    {view==="adminPin"?<div className="card hero stack"><span className="kicker">Admin access</span><h1>Enter code.</h1><input className="input" inputMode="numeric" placeholder="Admin code" value={pin} onChange={(e)=>setPin(e.target.value)} /><button className="primaryBtn" onClick={()=>{if(pin===ADMIN_CODE){setAdminAuthed(true);setView("admin");}}}>Open Admin</button><button className="ghostBtn" onClick={()=>setView("entry")}>Back</button></div>:null}
+    {view==="admin"?<div className="stack"><div className="card stack"><span className="kicker">Admin dashboard</span><h2>Schedule control</h2><div className="panelGrid"><div className="stat"><div className="statNum">{pendingRequests.length}</div><div className="statLabel">Pending</div></div><div className="stat"><div className="statNum">{state.lifeguards.length}</div><div className="statLabel">Lifeguards</div></div><div className="stat"><div className="statNum">{state.shifts.reduce((n,s)=>n+openCount(s),0)}</div><div className="statLabel">Open spots</div></div></div><div className="actions"><button className="primaryBtn" onClick={approveAll}>Approve All Pending</button><button className="ghostBtn" onClick={()=>void loadShared()}>Refresh</button></div></div>
+      <div className="card stack"><h3>Lifeguards and PINs</h3><input className="input" placeholder="Lifeguard first name" value={guardForm.name} onChange={(e)=>setGuardForm({...guardForm,name:e.target.value})}/><input className="input" inputMode="numeric" placeholder="Six digit PIN" value={guardForm.pin} onChange={(e)=>setGuardForm({...guardForm,pin:cleanPin(e.target.value)})}/><div className="actions"><button className="primaryBtn" onClick={saveLifeguard}>{guardForm.id?"Save Lifeguard":"Add Lifeguard"}</button>{guardForm.id?<button className="ghostBtn" onClick={()=>setGuardForm({id:"",name:"",pin:""})}>Cancel</button>:null}</div><div className="nameWrap">{state.lifeguards.sort((a,b)=>a.name.localeCompare(b.name)).map((g)=><span className="namePill" key={g.id}>{g.name} · {g.pin} <button className="miniBtn" onClick={()=>setGuardForm(g)}>Edit</button> <button className="miniBtn danger" onClick={()=>deleteLifeguard(g.id)}>Delete</button></span>)}</div></div>
+      <div className="card stack"><h3>Approve or deny requests</h3><p className="small">Use Approve All first, then remove anyone you do not want on that shift. Grey alternate names stay visible in the calendar so Hollie can swap them back in later.</p>{pendingRequests.length===0?<p className="small">No pending requests.</p>:pendingRequests.map((r)=>{const s=state.shifts.find((x)=>x.id===r.shiftId); return <div className="requestRow" key={r.id}><div><strong>{r.name}</strong><br/><span className="small">{s?`${niceDate(s.date)} · ${s.type} · ${s.start}-${s.end}`:r.shiftId}</span></div><div className="actions"><button className="primaryBtn" onClick={()=>approveRequest(r)}>Approve</button><button className="ghostBtn" onClick={()=>rejectRequest(r)}>Deny</button></div></div>;})}</div>
+      <div className="card stack"><div className="row"><div><h3>{scheduleWindow==="current"?"Current":"Next"} week schedule</h3><p className="small">{longDate(currentStart)} through {longDate(currentEnd)}</p></div><button className="ghostBtn" onClick={()=>setScheduleWindow(scheduleWindow==="current"?"next":"current")}>{scheduleWindow==="current"?"Show next week":"Show current week"}</button></div>{adminRows.map((r)=><div className="adminDay" key={r.dateIso}><div className="dateLine">{niceDate(r.dateIso)}</div><div className="adminGrid"><div>{renderAdminCell(r.dateIso,"AM")}</div><div>{renderAdminCell(r.dateIso,"PM")}</div></div></div>)}<div className="stack"><h3>Balance helper</h3><p className="small">Approved shifts this week. Use this to remove an over-scheduled guard and choose a grey alternate.</p><div className="nameWrap">{weekCounts.length?weekCounts.map(([n,c])=><span className="namePill" key={n}>{n}: {c}</span>):<span className="small">No approved shifts this week.</span>}</div><h3>Submitted availability counts</h3><div className="nameWrap">{requestCounts.length?requestCounts.map(([n,c])=><span className="namePill" key={n}>{n}: {c}</span>):<span className="small">No submitted requests.</span>}</div></div></div>
+      <div className="card stack"><h3>Manual schedule tools</h3><input className="input" placeholder="Name to add manually" value={manualName} onChange={(e)=>setManualName(e.target.value)}/><p className="small">To manually add someone, use the Add button inside a shift cell.</p>{adminRows.map((r)=><div className="requestRow" key={`add-${r.dateIso}`}><span>{niceDate(r.dateIso)}</span><div className="actions"><button className="ghostBtn" onClick={()=>{const s=findShift(r.dateIso,"AM"); if(s) addManual(s.id);}}>Add AM</button><button className="ghostBtn" onClick={()=>{const s=findShift(r.dateIso,"PM"); if(s) addManual(s.id);}}>Add PM</button></div></div>)}</div>
+      <div className="card stack"><h3>Export report</h3><div className="row"><input className="input" type="date" value={reportStart} onChange={(e)=>setReportStart(e.target.value)}/><input className="input" type="date" value={reportEnd} onChange={(e)=>setReportEnd(e.target.value)}/></div><button className="primaryBtn" onClick={exportReport}>Download CSV</button></div>
+      <div className="card stack dangerZone"><h3>Reset schedule</h3><p className="small">This clears schedule and requests but keeps lifeguard names/PINs. Type RESET SCHEDULE.</p><input className="input" value={resetText} onChange={(e)=>setResetText(e.target.value)}/><button className="dangerBtn" onClick={resetAll}>Reset Everything</button></div></div>:null}
+    {edit?<div className="modal"><div className="modalCard stack"><h3>Edit approved guard</h3><input className="input" value={edit.value} onChange={(e)=>setEdit({...edit,value:e.target.value})}/><div className="actions"><button className="primaryBtn" onClick={saveEdit}>Save</button><button className="ghostBtn" onClick={()=>removeAssignment(edit.shiftId, edit.oldName)}>Remove</button><button className="ghostBtn" onClick={()=>setEdit(null)}>Cancel</button></div></div></div>:null}
+  </section></main>;
 }
