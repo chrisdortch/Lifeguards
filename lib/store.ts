@@ -9,16 +9,16 @@ export function hasDatabase() {
   return Boolean(process.env.DATABASE_URL);
 }
 
-async function getSql() {
+function getSql() {
   if (!process.env.DATABASE_URL) return null;
   return neon(process.env.DATABASE_URL);
 }
 
 export async function getState(): Promise<AppState> {
-  const sql = await getSql();
+  const sql = getSql();
   if (!sql) return blankState();
   await sql`create table if not exists schedule_state (id text primary key, data jsonb not null, updated_at timestamptz not null default now())`;
-  const rows = await sql<Row[]>`select data from schedule_state where id = ${KEY} limit 1`;
+  const rows = await sql`select data from schedule_state where id = ${KEY} limit 1` as Row[];
   if (!rows.length) {
     const initial = blankState();
     await sql`insert into schedule_state (id, data) values (${KEY}, ${JSON.stringify(initial)}::jsonb)`;
@@ -28,7 +28,7 @@ export async function getState(): Promise<AppState> {
 }
 
 export async function saveState(state: AppState): Promise<AppState> {
-  const sql = await getSql();
+  const sql = getSql();
   const clean = { ...state, updatedAt: new Date().toISOString() };
   if (!sql) return clean;
   await sql`create table if not exists schedule_state (id text primary key, data jsonb not null, updated_at timestamptz not null default now())`;
