@@ -1,1 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 170"><rect width="480" height="170" fill="white"/><text x="240" y="90" text-anchor="middle" font-family="Arial" font-size="32" fill="#075f76">Serenity Stores</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 170" width="480" height="170" role="img" aria-label="Serenity Stores logo">
+  <title>Serenity Stores logo</title>
+  <rect width="480" height="170" fill="#ffffff"/>
+  <image href="https://serenitystores.com/serenity-stores-logo.svg" x="0" y="0" width="480" height="170" preserveAspectRatio="xMidYMid meet"/>
+</svg>
