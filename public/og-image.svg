@@ -1,36 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
-  <title id="title">Serenity Shores Pool Schedule</title>
-  <desc id="desc">Open Graph image for Serenity Shores Pool Schedule.</desc>
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#f8fdff"/>
-      <stop offset="0.55" stop-color="#edf8fa"/>
-      <stop offset="1" stop-color="#fff8e8"/>
-    </linearGradient>
-    <radialGradient id="glow" cx="12%" cy="12%" r="70%">
-      <stop offset="0" stop-color="#d8f5f2" stop-opacity="0.9"/>
-      <stop offset="1" stop-color="#d8f5f2" stop-opacity="0"/>
-    </radialGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="24" stdDeviation="24" flood-color="#082b3c" flood-opacity="0.14"/>
-    </filter>
-  </defs>
-  <rect width="1200" height="630" fill="url(#bg)"/>
-  <rect width="1200" height="630" fill="url(#glow)"/>
-  <path d="M-40 450 C120 360 240 390 390 470 C540 550 690 555 820 465 C935 386 1040 372 1240 435" fill="none" stroke="#68cdbd" stroke-width="22" stroke-linecap="round" opacity="0.22"/>
-  <path d="M-30 500 C150 410 305 430 440 500 C575 570 700 565 845 480 C995 390 1095 410 1230 486" fill="none" stroke="#0b4e70" stroke-width="14" stroke-linecap="round" opacity="0.16"/>
-  <g transform="translate(125 95) scale(0.79)" filter="url(#shadow)">
-    <rect x="-35" y="-20" width="1270" height="470" rx="42" fill="#ffffff" opacity="0.92"/>
-    <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M418 107 C505 35 606 17 688 61 C640 48 590 65 548 112 C506 160 454 190 373 187 C386 173 400 139 418 107 Z" fill="#68cdbd"/>
-      <path d="M380 182 C460 176 494 132 535 91 C573 53 624 38 681 54 C619 71 585 121 554 167 C526 207 490 243 419 250 C391 253 356 251 322 244 C344 229 363 207 380 182 Z" fill="#0b4e70"/>
-      <path d="M604 132 C642 183 712 212 807 208 C950 202 1041 167 1137 202 C1056 199 991 226 885 240 C766 256 661 240 589 173 C576 161 584 139 604 132 Z" fill="#0b4e70"/>
-      <path d="M694 129 C724 163 767 181 827 181 C876 181 925 171 978 158 C927 187 869 203 802 202 C738 201 692 181 661 145 C673 134 684 129 694 129 Z" fill="#68cdbd" opacity="0.88"/>
-    </g>
-    <g font-family="Georgia, 'Times New Roman', serif" font-weight="700">
-      <text x="42" y="303" font-size="88" letter-spacing="4" fill="#0b4e70">SERENITY</text>
-      <text x="632" y="303" font-size="88" letter-spacing="4" fill="#68cdbd">SHORES</text>
-    </g>
-    <text x="600" y="384" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="500" font-size="45" letter-spacing="20" fill="#4e7890">TABLE ROCK LAKE</text>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630" role="img" aria-label="Serenity Stores logo">
+  <rect width="1200" height="630" fill="#ffffff"/>
+  <image href="https://serenitystores.com/serenity-stores-logo.svg" x="90" y="103" width="1020" height="361" preserveAspectRatio="xMidYMid meet"/>
 </svg>
