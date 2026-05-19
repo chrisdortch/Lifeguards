@@ -5,13 +5,18 @@ const KEY = "main";
 
 type Row = { data: AppState };
 
+function databaseUrl() {
+  return process.env.DATABASE_URL || process.env.POSTGRES_URL || "";
+}
+
 export function hasDatabase() {
-  return Boolean(process.env.DATABASE_URL);
+  return Boolean(databaseUrl());
 }
 
 function getSql() {
-  if (!process.env.DATABASE_URL) return null;
-  return neon(process.env.DATABASE_URL);
+  const url = databaseUrl();
+  if (!url) return null;
+  return neon(url);
 }
 
 export async function getState(): Promise<AppState> {
