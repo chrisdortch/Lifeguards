@@ -3,7 +3,8 @@ export type RequestStatus = "pending" | "approved" | "rejected";
 export type Assignment = { name: string; source?: "admin" | "request" | "manual" };
 export type Shift = { id: string; date: string; type: ShiftType; start: string; end: string; required: number; assignments: Assignment[] };
 export type RequestItem = { id: string; name: string; shiftId: string; status: RequestStatus; createdAt: string };
-export type AppState = { shifts: Shift[]; requests: RequestItem[]; updatedAt: string };
+export type Lifeguard = { id: string; name: string; pin: string };
+export type AppState = { shifts: Shift[]; requests: RequestItem[]; lifeguards: Lifeguard[]; updatedAt: string };
 
 export const END_DATE = new Date("2026-10-10T12:00:00");
 
@@ -43,7 +44,7 @@ export function buildInitialShifts(): Shift[] {
 }
 
 export function blankState(): AppState {
-  return { shifts: buildInitialShifts(), requests: [], updatedAt: new Date().toISOString() };
+  return { shifts: buildInitialShifts(), requests: [], lifeguards: [], updatedAt: new Date().toISOString() };
 }
 
 export function openCount(shift: Shift) {
