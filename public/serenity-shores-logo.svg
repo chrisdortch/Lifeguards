@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+  <title id="title">Serenity Shores Table Rock Lake</title>
+  <desc id="desc">Clean vector logo for Serenity Shores Table Rock Lake.</desc>
+  <defs>
+    <filter id="soften" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="0.35" result="blur"/>
+      <feOffset dx="0" dy="0" result="offset"/>
+      <feMerge>
+        <feMergeNode in="offset"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" filter="url(#soften)">
+    <path d="M418 107 C505 35 606 17 688 61 C640 48 590 65 548 112 C506 160 454 190 373 187 C386 173 400 139 418 107 Z" fill="#68cdbd" opacity="0.98"/>
+    <path d="M380 182 C460 176 494 132 535 91 C573 53 624 38 681 54 C619 71 585 121 554 167 C526 207 490 243 419 250 C391 253 356 251 322 244 C344 229 363 207 380 182 Z" fill="#0b4e70" opacity="0.98"/>
+    <path d="M604 132 C642 183 712 212 807 208 C950 202 1041 167 1137 202 C1056 199 991 226 885 240 C766 256 661 240 589 173 C576 161 584 139 604 132 Z" fill="#0b4e70" opacity="0.98"/>
+    <path d="M694 129 C724 163 767 181 827 181 C876 181 925 171 978 158 C927 187 869 203 802 202 C738 201 692 181 661 145 C673 134 684 129 694 129 Z" fill="#68cdbd" opacity="0.88"/>
+  </g>
+  <g font-family="Georgia, 'Times New Roman', serif" font-weight="700">
+    <text x="42" y="303" font-size="88" letter-spacing="4" fill="#0b4e70">SERENITY</text>
+    <text x="632" y="303" font-size="88" letter-spacing="4" fill="#68cdbd">SHORES</text>
+  </g>
+  <text x="600" y="384" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="500" font-size="45" letter-spacing="20" fill="#4e7890">TABLE ROCK LAKE</text>
+</svg>
