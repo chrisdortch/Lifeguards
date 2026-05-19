@@ -6,7 +6,33 @@ const KEY = "main";
 type Row = { data: AppState };
 
 function databaseUrl() {
-  return process.env.DATABASE_URL || process.env.POSTGRES_URL || "";
+  const explicit =
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.DATABASE_URL_UNPOOLED ||
+    process.env.DATABASE_URL_PGUSER ||
+    process.env.DATABASE_URL_POOLED ||
+    process.env.POSTGRES_PRISMA_URL ||
+    process.env.POSTGRES_URL_NON_POOLING ||
+    "";
+
+  if (explicit) return explicit;
+
+  const dynamic = Object.entries(process.env).find(([key, value]) => {
+    return /^(DATABASE_URL|POSTGRES_URL)/.test(key) && typeof value === "string" && value.startsWith("postgres");
+  });
+
+  if (dynamic?.[1]) return dynamic[1];
+
+  const host = process.env.PGHOST;
+  const database = process.env.PGDATABASE;
+  const user = process.env.PGUSER;
+  const password = process.env.PGPASSWORD;
+  if (host && database && user && password) {
+    return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}/${database}?sslmode=require`;
+  }
+
+  return "";
 }
 
 export function hasDatabase() {
