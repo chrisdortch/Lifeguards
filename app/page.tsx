@@ -80,7 +80,7 @@ function overCount(shift: Shift) {
   return Math.max(0, shift.assignments.length - shift.required);
 }
 function guardList(shift?: Shift) {
-  const names = shift?.assignments.map((a) => a.name.trim()).filter(Boolean) || [];
+  const names = shift?.assignments.map((a) => `${a.lead ? "★ " : ""}${a.name.trim()}`).filter(Boolean) || [];
   return names.length ? names.join(", ") : "OPEN";
 }
 function shiftText(shift?: Shift) {
@@ -275,6 +275,9 @@ export default function Home() {
   function alreadyAssigned(shift: Shift, guardName: string) {
     return shift.assignments.some((a) => sameName(a.name, guardName));
   }
+  function isLeadForShift(shift: Shift, guardName: string) {
+    return shift.assignments.some((a) => sameName(a.name, guardName) && Boolean(a.lead));
+  }
   function isDoubleForDate(date: string, guardName: string) {
     return state.shifts.filter((s) => s.date === date).reduce((n, s) => n + s.assignments.filter((a) => sameName(a.name, guardName)).length, 0) > 1;
   }
@@ -314,7 +317,7 @@ export default function Home() {
 
   function toggleShift(shiftId: string) {
     const shift = state.shifts.find((s) => s.id === shiftId);
-    if (!shift || shift.date < today || shift.date > selectableEnd) return;
+    if (!shift || shift.date < today || shift.date > selectableEnd || openCount(shift) <= 0) return;
     setSelected((cur) => (cur.includes(shiftId) ? cur.filter((id) => id !== shiftId) : [...cur, shiftId]));
   }
 
@@ -384,6 +387,22 @@ export default function Home() {
   function removeAssignment(shiftId: string, oldName: string) {
     updateState((cur) => ({ ...cur, shifts: cur.shifts.map((s) => (s.id === shiftId ? { ...s, assignments: s.assignments.filter((a) => !sameName(a.name, oldName)) } : s)) }), true);
   }
+  function toggleLead(shiftId: string, guardName: string) {
+    updateState(
+      (cur) => ({
+        ...cur,
+        shifts: cur.shifts.map((s) => {
+          if (s.id !== shiftId) return s;
+          const currentlyLead = isLeadForShift(s, guardName);
+          return {
+            ...s,
+            assignments: s.assignments.map((a) => (sameName(a.name, guardName) ? { ...a, lead: !currentlyLead } : { ...a, lead: false })),
+          };
+        }),
+      }),
+      true,
+    );
+  }
   function saveEdit() {
     if (!edit || !edit.value.trim()) return;
     updateState((cur) => ({ ...cur, shifts: cur.shifts.map((s) => (s.id === edit.shiftId ? { ...s, assignments: s.assignments.map((a) => (sameName(a.name, edit.oldName) ? { ...a, name: edit.value.trim() } : a)) } : s)) }), true);
@@ -422,12 +441,18 @@ export default function Home() {
       });
   }
 
-  function renderNameChip(guardName: string, action?: "add" | "remove", onClick?: () => void, status?: string, doubleFlag = false) {
+  function renderNameChip(guardName: string, action?: "add" | "remove", onClick?: () => void, status?: string, doubleFlag = false, lead = false, onLeadClick?: () => void) {
     return (
-      <span className={doubleFlag ? "guardChip doubleChip" : "guardChip"} style={guardStyle(guardName)}>
+      <span className={doubleFlag ? "guardChip doubleChip" : lead ? "guardChip leadChip" : "guardChip"} style={guardStyle(guardName)}>
         <strong>{guardName}</strong>
         {doubleFlag ? <em className="doubleFlag">DOUBLE</em> : null}
+        {lead ? <em className="leadBadge">Lead</em> : null}
         {status ? <em>{status}</em> : null}
+        {onLeadClick ? (
+          <button className={lead ? "leadStarBtn active" : "leadStarBtn"} onClick={onLeadClick} type="button" aria-label={`${lead ? "Remove" : "Make"} ${guardName} Lead`}>
+            {lead ? "★" : "☆"}
+          </button>
+        ) : null}
         {action ? (
           <button className={action === "add" ? "chipAction add" : "chipAction remove"} onClick={onClick} type="button" aria-label={`${action === "add" ? "Add" : "Remove"} ${guardName}`}>
             {action === "add" ? "+" : "−"}
@@ -440,8 +465,9 @@ export default function Home() {
   function renderApprovedShiftForMe(shift: Shift) {
     const names = shift.assignments.map((a) => a.name).filter(Boolean);
     const coworkers = names.filter((n) => !sameName(n, selectedName));
+    const isLead = isLeadForShift(shift, selectedName);
     return (
-      <div key={shift.id} className="shiftBtn approvedOnly">
+      <div key={shift.id} className={isLead ? "shiftBtn approvedOnly leadApproved" : "shiftBtn approvedOnly"}>
         <span className="shiftTitle">
           <span>
             {niceDate(shift.date)} · {shift.type === "AM" ? "Morning" : "Afternoon"}
@@ -450,7 +476,11 @@ export default function Home() {
             {shift.start} - {shift.end}
           </span>
         </span>
-        <span className="shiftMeta">You are approved for this shift{coworkers.length ? ` with ${coworkers.join(", ")}` : "."}</span>
+        <span className="shiftMeta">
+          {isLead ? "★ You are Lead for this shift" : "You are approved for this shift"}
+          {coworkers.length ? ` with ${coworkers.join(", ")}` : "."}
+        </span>
+        {isLead ? <span className="leadCallout">★ Lead shift</span> : null}
       </div>
     );
   }
@@ -459,8 +489,10 @@ export default function Home() {
     const requested = myRequests.some((r) => r.shiftId === shift.id && r.status !== "rejected");
     const isSelected = selected.includes(shift.id);
     const meAssigned = shift.assignments.some((a) => sameName(a.name, selectedName));
+    const spots = openCount(shift);
+    const full = spots <= 0;
     return (
-      <button key={shift.id} className="shiftBtn" data-selected={isSelected} disabled={requested || meAssigned} onClick={() => toggleShift(shift.id)}>
+      <button key={shift.id} className="shiftBtn" data-selected={isSelected} disabled={requested || meAssigned || full} onClick={() => toggleShift(shift.id)}>
         <span className="shiftTitle">
           <span>{shift.type === "AM" ? "Morning" : "Afternoon"}</span>
           <span>
@@ -468,7 +500,7 @@ export default function Home() {
           </span>
         </span>
         <span>
-          {meAssigned ? <span className="badge badgeFull">You work</span> : null} {requested ? <span className="badge badgePending">Already requested</span> : null} {isSelected ? <span className="badge badgePending">Selected</span> : null}
+          {meAssigned ? <span className="badge badgeFull">You work</span> : null} {requested ? <span className="badge badgePending">Already requested</span> : null} {isSelected ? <span className="badge badgePending">Selected</span> : null} {full ? <span className="badge badgeDanger">Full</span> : <span className="badge badgeOpen">{spots} open</span>}
         </span>
       </button>
     );
@@ -485,7 +517,7 @@ export default function Home() {
         </div>
         <div className="nameWrap">
           {shift.assignments.length === 0 ? <span className="openText">OPEN</span> : null}
-          {shift.assignments.map((a) => renderNameChip(a.name, "remove", () => removeAssignment(shift.id, a.name), undefined, isDoubleForDate(date, a.name)))}
+          {shift.assignments.map((a) => renderNameChip(a.name, "remove", () => removeAssignment(shift.id, a.name), undefined, isDoubleForDate(date, a.name), Boolean(a.lead), () => toggleLead(shift.id, a.name)))}
         </div>
         <span className={overCount(shift) > 0 ? "badge badgeDanger" : openCount(shift) > 0 ? "badge badgeOpen" : "badge badgeFull"}>{overCount(shift) > 0 ? `${overCount(shift)} overfilled` : openCount(shift) > 0 ? `${openCount(shift)} open` : "Full"}</span>
         {potentials.length ? (
