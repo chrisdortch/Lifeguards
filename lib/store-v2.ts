@@ -1,5 +1,6 @@
 import { neon } from "@neondatabase/serverless";
 import { AppState, blankState, buildInitialShifts } from "./schedule-v2";
+import { getState as getStateV1 } from "./store";
 
 const KEY = "v2-preview";
 
@@ -33,7 +34,7 @@ function normalizeState(state: AppState): AppState {
   const incomingShiftMap = new Map((state.shifts || []).map((shift) => [shift.id, shift]));
   const shifts = buildInitialShifts().map((base) => {
     const incoming = incomingShiftMap.get(base.id);
-    return incoming ? { ...base, ...incoming, assignments: incoming.assignments || [] } : base;
+    return incoming ? { ...base, ...incoming, type: base.type, start: base.start, end: base.end, assignments: incoming.assignments || [] } : base;
   });
   return {
     ...initial,
@@ -44,6 +45,25 @@ function normalizeState(state: AppState): AppState {
     settings: { ...initial.settings, ...(state.settings || {}) },
     updatedAt: state.updatedAt || new Date().toISOString(),
   };
+}
+
+async function seedFromV1(): Promise<AppState> {
+  try {
+    const v1 = await getStateV1();
+    const seeded = normalizeState({
+      ...blankState(),
+      ...(v1 as unknown as Partial<AppState>),
+      settings: { nextWeekUnlocked: false },
+      updatedAt: new Date().toISOString(),
+    });
+    return seeded;
+  } catch {
+    return blankState();
+  }
+}
+
+function hasAnyAssignments(state: AppState) {
+  return state.shifts.some((shift) => shift.assignments.length > 0);
 }
 
 function mergeRequests(existingRequests: AppState["requests"], incomingRequests: AppState["requests"]) {
@@ -58,7 +78,7 @@ function mergeStates(existing: AppState, incoming: AppState, options: SaveOption
   return {
     shifts: options.replace ? next.shifts : current.shifts,
     requests: mergeRequests(current.requests, next.requests),
-    lifeguards: next.lifeguards,
+    lifeguards: options.hardReplace || next.lifeguards.length > 0 ? next.lifeguards : current.lifeguards,
     settings: options.replace ? next.settings : { ...current.settings, ...next.settings },
     updatedAt: new Date().toISOString(),
   };
@@ -66,15 +86,31 @@ function mergeStates(existing: AppState, incoming: AppState, options: SaveOption
 
 export async function getStateV2(): Promise<AppState> {
   const sql = getSql();
-  if (!sql) return blankState();
+  if (!sql) return seedFromV1();
   await sql`create table if not exists schedule_state (id text primary key, data jsonb not null, updated_at timestamptz not null default now())`;
   const rows = await sql`select data from schedule_state where id = ${KEY} limit 1` as Row[];
   if (!rows.length) {
-    const initial = blankState();
+    const initial = await seedFromV1();
     await sql`insert into schedule_state (id, data) values (${KEY}, ${JSON.stringify(initial)}::jsonb)`;
     return initial;
   }
-  return normalizeState(rows[0].data);
+
+  const current = normalizeState(rows[0].data);
+  if (current.lifeguards.length === 0) {
+    const seeded = await seedFromV1();
+    const repaired = normalizeState({
+      ...current,
+      lifeguards: seeded.lifeguards,
+      requests: current.requests.length > 0 ? current.requests : seeded.requests,
+      shifts: hasAnyAssignments(current) ? current.shifts : seeded.shifts,
+      settings: current.settings,
+      updatedAt: new Date().toISOString(),
+    });
+    await sql`update schedule_state set data = ${JSON.stringify(repaired)}::jsonb, updated_at = now() where id = ${KEY}`;
+    return repaired;
+  }
+
+  return current;
 }
 
 export async function saveStateV2(state: AppState, options: SaveOptions = {}): Promise<AppState> {
