@@ -4,7 +4,6 @@ import { AppState, blankState, buildInitialShifts } from "./schedule";
 const KEY = "main";
 
 type Row = { data: AppState };
-
 type SaveOptions = { replace?: boolean; hardReplace?: boolean };
 
 function databaseUrl() {
@@ -48,6 +47,7 @@ function getSql() {
 }
 
 function normalizeState(state: AppState): AppState {
+  const initial = blankState();
   const initialShifts = buildInitialShifts();
   const incomingShiftMap = new Map((state.shifts || []).map((shift) => [shift.id, shift]));
   const shifts = initialShifts.map((base) => {
@@ -56,9 +56,12 @@ function normalizeState(state: AppState): AppState {
   });
 
   return {
+    ...initial,
+    ...state,
     shifts,
     requests: Array.isArray(state.requests) ? state.requests : [],
     lifeguards: Array.isArray(state.lifeguards) ? state.lifeguards : [],
+    settings: { ...initial.settings, ...(state.settings || {}) },
     updatedAt: state.updatedAt || new Date().toISOString(),
   };
 }
@@ -76,11 +79,12 @@ function mergeStates(existing: AppState, incoming: AppState, options: SaveOption
   const next = normalizeState(incoming);
 
   return {
-    // Normal lifeguard submissions should only merge request records so a stale phone cannot overwrite Hollie's live schedule.
+    // Normal lifeguard submissions should only merge request records so a stale phone cannot overwrite the live schedule.
     // Admin schedule edits pass replace=true, which replaces assignments while still merging any newly submitted requests.
     shifts: options.replace ? next.shifts : current.shifts,
     requests: mergeRequests(current.requests, next.requests),
     lifeguards: next.lifeguards,
+    settings: options.replace ? next.settings : { ...current.settings, ...next.settings },
     updatedAt: new Date().toISOString(),
   };
 }
