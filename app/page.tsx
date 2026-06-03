@@ -18,11 +18,11 @@ import {
 
 type View = "entry" | "select" | "confirm" | "adminPin" | "admin";
 type ReportRow = { dateIso: string; date: string; am: string; pm: string; open: number };
-
 type GuardColor = { background: string; borderColor: string };
 
+const VERSION = "V5";
 const ADMIN_CODE = "7900";
-const STORAGE_KEY = "serenity-shores-lifeguard-scheduler-v6";
+const STORAGE_KEY = "serenity-shores-lifeguard-scheduler-v7";
 const SCHEDULE_LIMIT_DAYS = 14;
 const PIN_DIGITS = 6;
 
@@ -61,23 +61,38 @@ const GUARD_PALETTE: GuardColor[] = [
   { background: "#f1ffe8", borderColor: "#5d9828" },
 ];
 
-function normalizeState(input: AppState): AppState {
-  return {
-    ...blankState(),
-    ...input,
-    lifeguards: Array.isArray(input.lifeguards) ? input.lifeguards : [],
-    requests: Array.isArray(input.requests) ? input.requests : [],
-    shifts: Array.isArray(input.shifts) ? input.shifts : blankState().shifts,
-  };
-}
 function sameName(a: string, b: string) {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+function nameKey(value: string) {
+  return value.trim().toLowerCase();
 }
 function cleanPin(value: string) {
   return value.replace(/\D/g, "").slice(0, PIN_DIGITS);
 }
 function overCount(shift: Shift) {
   return Math.max(0, shift.assignments.length - shift.required);
+}
+function shiftLabel(type: ShiftType) {
+  return type === "AM" ? "AM" : "PM";
+}
+function requestKey(r: Pick<RequestItem, "shiftId" | "name">) {
+  return `${r.shiftId}|${nameKey(r.name)}`;
+}
+function requestRank(status: RequestItem["status"]) {
+  if (status === "approved") return 3;
+  if (status === "pending") return 2;
+  return 1;
+}
+function hashName(value: string) {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  return hash;
+}
+function addDaysFromIso(startIso: string, days: number) {
+  const d = new Date(`${startIso}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 function guardList(shift?: Shift) {
   const names = shift?.assignments.map((a) => `${a.lead ? "★ " : ""}${a.name.trim()}`).filter(Boolean) || [];
@@ -102,15 +117,41 @@ function rowsBetween(shifts: Shift[], start: string, end: string): ReportRow[] {
     });
   return Array.from(byDate.values()).sort((a, b) => a.dateIso.localeCompare(b.dateIso));
 }
-function addDaysFromIso(startIso: string, days: number) {
-  const d = new Date(`${startIso}T12:00:00`);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+function dedupeRequests(requests: RequestItem[]) {
+  const map = new Map<string, RequestItem>();
+  for (const request of requests) {
+    const cleanName = request.name.trim();
+    if (!cleanName || !request.shiftId) continue;
+    const next = { ...request, name: cleanName, createdAt: request.createdAt || new Date().toISOString() };
+    const key = requestKey(next);
+    const current = map.get(key);
+    if (!current || requestRank(next.status) > requestRank(current.status) || (requestRank(next.status) === requestRank(current.status) && next.createdAt > current.createdAt)) {
+      map.set(key, current ? { ...next, id: current.id } : next);
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
-function hashName(value: string) {
-  let hash = 0;
-  for (let i = 0; i < value.length; i += 1) hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
-  return hash;
+function normalizeState(input: AppState): AppState {
+  const base = blankState();
+  const shiftMap = new Map((Array.isArray(input.shifts) ? input.shifts : []).map((s) => [s.id, s]));
+  return {
+    ...base,
+    ...input,
+    lifeguards: Array.isArray(input.lifeguards) ? input.lifeguards : [],
+    requests: dedupeRequests(Array.isArray(input.requests) ? input.requests : []),
+    shifts: base.shifts.map((shift) => {
+      const incoming = shiftMap.get(shift.id);
+      if (!incoming) return shift;
+      const seen = new Set<string>();
+      const assignments = (incoming.assignments || []).filter((a) => {
+        const key = nameKey(a.name);
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      return { ...shift, ...incoming, assignments };
+    }),
+  };
 }
 
 export default function Home() {
@@ -127,7 +168,6 @@ export default function Home() {
   const [reportStart, setReportStart] = useState(() => todayIso());
   const [reportEnd, setReportEnd] = useState(() => addDaysIso(14));
   const [manualName, setManualName] = useState("");
-  const [edit, setEdit] = useState<{ shiftId: string; oldName: string; value: string } | null>(null);
   const [resetText, setResetText] = useState("");
   const [scheduleWindow, setScheduleWindow] = useState<"current" | "next">("current");
   const [guardForm, setGuardForm] = useState<{ id: string; name: string; pin: string }>({ id: "", name: "", pin: "" });
@@ -140,12 +180,12 @@ export default function Home() {
       const next = normalizeState(data.state as AppState);
       setState(next);
       setShared(Boolean(data.shared));
-      setSyncStatus(data.shared ? "Shared database connected" : "Testing mode: browser storage only");
+      setSyncStatus(data.shared ? `Shared database connected · ${VERSION}` : `Testing mode: browser storage only · ${VERSION}`);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     } catch {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) setState(normalizeState(JSON.parse(saved) as AppState));
-      setSyncStatus("Offline fallback: browser storage only");
+      setSyncStatus(`Offline fallback: browser storage only · ${VERSION}`);
     }
   }
 
@@ -164,10 +204,10 @@ export default function Home() {
         const saved = normalizeState(data.state as AppState);
         setState(saved);
         setShared(Boolean(data.shared));
-        setSyncStatus(data.shared ? "Shared database connected" : "Testing mode: browser storage only");
+        setSyncStatus(data.shared ? `Shared database connected · ${VERSION}` : `Testing mode: browser storage only · ${VERSION}`);
       }
     } catch {
-      setSyncStatus("Offline fallback: browser storage only");
+      setSyncStatus(`Offline fallback: browser storage only · ${VERSION}`);
     }
   }
 
@@ -184,46 +224,41 @@ export default function Home() {
   const selectableEnd = addDaysIso(SCHEDULE_LIMIT_DAYS);
   const adminStart = scheduleWindow === "current" ? today : addDaysFromIso(selectableEnd, 1);
   const adminEnd = scheduleWindow === "current" ? selectableEnd : addDaysFromIso(selectableEnd, SCHEDULE_LIMIT_DAYS + 1);
+  const requests = useMemo(() => dedupeRequests(state.requests), [state.requests]);
+  const pendingRequests = requests.filter((r) => r.status === "pending");
+  const adminRows = rowsBetween(state.shifts, adminStart, adminEnd);
 
-  const twoWeekDates = useMemo(
-    () => Array.from(new Set(state.shifts.filter((s) => s.date >= today && s.date <= selectableEnd).map((s) => s.date))).sort(),
-    [state.shifts, today, selectableEnd],
-  );
-  const myRequests = useMemo(() => state.requests.filter((r) => sameName(r.name, selectedName)), [state.requests, selectedName]);
+  const twoWeekDates = useMemo(() => Array.from(new Set(state.shifts.filter((s) => s.date >= today && s.date <= selectableEnd).map((s) => s.date))).sort(), [state.shifts, today, selectableEnd]);
+  const myRequests = useMemo(() => requests.filter((r) => sameName(r.name, selectedName)), [requests, selectedName]);
   const myApprovedShifts = useMemo(
-    () =>
-      state.shifts
-        .filter((s) => s.date >= today && s.date <= selectableEnd && s.assignments.some((a) => sameName(a.name, selectedName)))
-        .sort((a, b) => a.id.localeCompare(b.id)),
+    () => state.shifts.filter((s) => s.date >= today && s.date <= selectableEnd && s.assignments.some((a) => sameName(a.name, selectedName))).sort((a, b) => a.id.localeCompare(b.id)),
     [state.shifts, selectedName, today, selectableEnd],
   );
-  const pendingRequests = state.requests.filter((r) => r.status === "pending");
-  const adminRows = rowsBetween(state.shifts, adminStart, adminEnd);
 
   const allGuardNames = useMemo(() => {
     const names = new Map<string, string>();
     const add = (value: string) => {
       const clean = value.trim();
-      if (clean && !names.has(clean.toLowerCase())) names.set(clean.toLowerCase(), clean);
+      if (clean && !names.has(nameKey(clean))) names.set(nameKey(clean), clean);
     };
     state.lifeguards.forEach((g) => add(g.name));
-    state.requests.forEach((r) => add(r.name));
+    requests.forEach((r) => add(r.name));
     state.shifts.forEach((s) => s.assignments.forEach((a) => add(a.name)));
     return Array.from(names.values()).sort((a, b) => a.localeCompare(b));
-  }, [state]);
+  }, [state.lifeguards, state.shifts, requests]);
 
   const colorMap = useMemo(() => {
     const used = new Set<number>();
     const map = new Map<string, GuardColor>();
     allGuardNames.forEach((guardName) => {
-      let index = hashName(guardName.toLowerCase()) % GUARD_PALETTE.length;
+      let index = hashName(nameKey(guardName)) % GUARD_PALETTE.length;
       let safety = 0;
       while (used.has(index) && safety < GUARD_PALETTE.length) {
         index = (index + 1) % GUARD_PALETTE.length;
         safety += 1;
       }
       used.add(index);
-      map.set(guardName.toLowerCase(), GUARD_PALETTE[index]);
+      map.set(nameKey(guardName), GUARD_PALETTE[index]);
     });
     return map;
   }, [allGuardNames]);
@@ -234,40 +269,27 @@ export default function Home() {
     const displayNames = new Map<string, string>();
     const addDisplayName = (value: string) => {
       const clean = value.trim();
-      if (clean && !displayNames.has(clean.toLowerCase())) displayNames.set(clean.toLowerCase(), clean);
+      if (clean && !displayNames.has(nameKey(clean))) displayNames.set(nameKey(clean), clean);
     };
-
     allGuardNames.forEach(addDisplayName);
-
     const shiftsById = new Map(state.shifts.map((s) => [s.id, s]));
-    state.shifts
-      .filter((s) => s.date >= adminStart && s.date <= adminEnd)
-      .forEach((s) => {
-        s.assignments.forEach((a) => {
-          addDisplayName(a.name);
-          const key = a.name.trim().toLowerCase();
-          approved.set(key, (approved.get(key) || 0) + 1);
-        });
-      });
-
-    state.requests.forEach((r) => {
+    state.shifts.filter((s) => s.date >= adminStart && s.date <= adminEnd).forEach((s) => s.assignments.forEach((a) => {
+      addDisplayName(a.name);
+      approved.set(nameKey(a.name), (approved.get(nameKey(a.name)) || 0) + 1);
+    }));
+    requests.forEach((r) => {
       const shift = shiftsById.get(r.shiftId);
       if (!shift || shift.date < adminStart || shift.date > adminEnd || r.status === "rejected") return;
       addDisplayName(r.name);
-      const key = r.name.trim().toLowerCase();
-      requested.set(key, (requested.get(key) || 0) + 1);
+      requested.set(nameKey(r.name), (requested.get(nameKey(r.name)) || 0) + 1);
     });
-
-    return Array.from(displayNames.entries())
-      .map(([key, display]) => ({ name: display, approved: approved.get(key) || 0, requests: requested.get(key) || 0 }))
-      .sort((a, b) => b.approved - a.approved || b.requests - a.requests || a.name.localeCompare(b.name));
-  }, [state.shifts, state.requests, allGuardNames, adminStart, adminEnd]);
-
+    return Array.from(displayNames.entries()).map(([key, display]) => ({ name: display, approved: approved.get(key) || 0, requests: requested.get(key) || 0 })).sort((a, b) => b.approved - a.approved || b.requests - a.requests || a.name.localeCompare(b.name));
+  }, [state.shifts, requests, allGuardNames, adminStart, adminEnd]);
   const maxBalanceValue = Math.max(1, ...balanceRows.map((r) => Math.max(r.approved, r.requests)));
 
   function guardStyle(guardName: string): GuardColor {
-    const fallback = GUARD_PALETTE[hashName(guardName.toLowerCase()) % GUARD_PALETTE.length];
-    return colorMap.get(guardName.trim().toLowerCase()) || fallback;
+    const fallback = GUARD_PALETTE[hashName(nameKey(guardName)) % GUARD_PALETTE.length];
+    return colorMap.get(nameKey(guardName)) || fallback;
   }
   function findShift(date: string, type: ShiftType) {
     return state.shifts.find((s) => s.date === date && s.type === type);
@@ -286,16 +308,25 @@ export default function Home() {
   }
   function doubleNamesInWindow() {
     const map = new Map<string, Set<string>>();
-    state.shifts
-      .filter((s) => s.date >= adminStart && s.date <= adminEnd)
-      .forEach((s) =>
-        s.assignments.forEach((a) => {
-          const key = `${s.date}|${a.name.toLowerCase()}`;
-          if (!map.has(key)) map.set(key, new Set());
-          map.get(key)!.add(s.type);
-        }),
-      );
+    state.shifts.filter((s) => s.date >= adminStart && s.date <= adminEnd).forEach((s) => s.assignments.forEach((a) => {
+      const key = `${s.date}|${nameKey(a.name)}`;
+      if (!map.has(key)) map.set(key, new Set());
+      map.get(key)!.add(s.type);
+    }));
     return Array.from(map.entries()).filter(([, types]) => types.size > 1);
+  }
+
+  function upsertRequest(list: RequestItem[], shiftId: string, guardName: string, status: RequestItem["status"] = "pending") {
+    const clean = guardName.trim();
+    const key = `${shiftId}|${nameKey(clean)}`;
+    let found = false;
+    const updated = list.map((r) => {
+      if (requestKey(r) !== key) return r;
+      found = true;
+      return { ...r, name: clean, status, createdAt: r.createdAt || new Date().toISOString() };
+    });
+    if (!found) updated.push({ id: `${shiftId}-${clean}-${Date.now()}-${Math.random().toString(16).slice(2)}`, shiftId, name: clean, status, createdAt: new Date().toISOString() });
+    return dedupeRequests(updated);
   }
 
   function submitName() {
@@ -314,99 +345,75 @@ export default function Home() {
     setLoginError("");
     setView("select");
   }
-
   function toggleShift(shiftId: string) {
     const shift = state.shifts.find((s) => s.id === shiftId);
     if (!shift || shift.date < today || shift.date > selectableEnd || openCount(shift) <= 0) return;
     setSelected((cur) => (cur.includes(shiftId) ? cur.filter((id) => id !== shiftId) : [...cur, shiftId]));
   }
-
   function submitRequests() {
     if (!selectedName || !selected.length) return;
-    const existing = new Set(state.requests.filter((r) => sameName(r.name, selectedName) && r.status !== "rejected").map((r) => r.shiftId));
-    const now = new Date().toISOString();
-    const newRequests = selected
-      .filter((shiftId) => !existing.has(shiftId))
-      .map((shiftId) => ({
-        id: `${shiftId}-${selectedName}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        shiftId,
-        name: selectedName,
-        status: "pending" as const,
-        createdAt: now,
-      }));
-    if (newRequests.length) updateState((cur) => ({ ...cur, requests: [...cur.requests, ...newRequests] }));
+    updateState((cur) => {
+      let nextRequests = cur.requests;
+      selected.forEach((shiftId) => {
+        const exists = nextRequests.some((r) => r.shiftId === shiftId && sameName(r.name, selectedName) && r.status !== "rejected");
+        if (!exists) nextRequests = upsertRequest(nextRequests, shiftId, selectedName, "pending");
+      });
+      return { ...cur, requests: nextRequests };
+    });
     setSelected([]);
     setView("confirm");
   }
-
   function approveRequest(request: RequestItem) {
     updateState((cur) => {
       const shift = cur.shifts.find((s) => s.id === request.shiftId);
-      if (!shift) return { ...cur, requests: cur.requests.map((r) => (r.id === request.id ? { ...r, status: "approved" as const } : r)) };
-      const nextShifts = alreadyAssigned(shift, request.name)
-        ? cur.shifts
-        : cur.shifts.map((s) => (s.id === request.shiftId ? { ...s, assignments: [...s.assignments, { name: request.name, source: "request" as const }] } : s));
-      return { ...cur, shifts: nextShifts, requests: cur.requests.map((r) => (r.id === request.id ? { ...r, status: "approved" as const } : r)) };
+      const shifts = shift && !alreadyAssigned(shift, request.name) ? cur.shifts.map((s) => (s.id === request.shiftId ? { ...s, assignments: [...s.assignments, { name: request.name, source: "request" as const }] } : s)) : cur.shifts;
+      return { ...cur, shifts, requests: upsertRequest(cur.requests, request.shiftId, request.name, "approved") };
     }, true);
   }
-
   function rejectRequest(request: RequestItem) {
-    updateState((cur) => ({ ...cur, requests: cur.requests.map((r) => (r.id === request.id ? { ...r, status: "rejected" as const } : r)) }), true);
+    updateState((cur) => ({ ...cur, requests: upsertRequest(cur.requests, request.shiftId, request.name, "rejected") }), true);
   }
-
   function approveAll() {
     updateState((cur) => {
-      const shifts = cur.shifts.map((s) => ({ ...s, assignments: [...s.assignments] }));
-      const requests = cur.requests.map((r) => ({ ...r }));
-      for (const r of requests.filter((x) => x.status === "pending")) {
+      let shifts = cur.shifts.map((s) => ({ ...s, assignments: [...s.assignments] }));
+      let nextRequests = cur.requests;
+      for (const r of dedupeRequests(cur.requests).filter((x) => x.status === "pending")) {
         const idx = shifts.findIndex((s) => s.id === r.shiftId);
         if (idx >= 0 && !alreadyAssigned(shifts[idx], r.name)) shifts[idx] = { ...shifts[idx], assignments: [...shifts[idx].assignments, { name: r.name, source: "request" as const }] };
-        r.status = "approved";
+        nextRequests = upsertRequest(nextRequests, r.shiftId, r.name, "approved");
       }
-      return { ...cur, shifts, requests };
+      return { ...cur, shifts, requests: nextRequests };
     }, true);
   }
-
-  function addManualToShift(shiftId: string, guardName: string) {
+  function addManualToShift(shiftId: string, guardName: string, source: "manual" | "request" = "manual") {
     const clean = guardName.trim();
     if (!clean) return;
-    updateState(
-      (cur) => ({
-        ...cur,
-        shifts: cur.shifts.map((s) => (s.id === shiftId && !alreadyAssigned(s, clean) ? { ...s, assignments: [...s.assignments, { name: clean, source: "manual" as const }] } : s)),
-        requests: cur.requests.map((r) => (r.shiftId === shiftId && sameName(r.name, clean) ? { ...r, status: "approved" as const } : r)),
-      }),
-      true,
-    );
+    updateState((cur) => ({
+      ...cur,
+      shifts: cur.shifts.map((s) => (s.id === shiftId && !alreadyAssigned(s, clean) ? { ...s, assignments: [...s.assignments, { name: clean, source }] } : s)),
+      requests: upsertRequest(cur.requests, shiftId, clean, "approved"),
+    }), true);
   }
-
   function addManual(shiftId: string) {
     addManualToShift(shiftId, manualName);
     setManualName("");
   }
   function removeAssignment(shiftId: string, oldName: string) {
-    updateState((cur) => ({ ...cur, shifts: cur.shifts.map((s) => (s.id === shiftId ? { ...s, assignments: s.assignments.filter((a) => !sameName(a.name, oldName)) } : s)) }), true);
+    updateState((cur) => ({
+      ...cur,
+      shifts: cur.shifts.map((s) => (s.id === shiftId ? { ...s, assignments: s.assignments.filter((a) => !sameName(a.name, oldName)) } : s)),
+      requests: upsertRequest(cur.requests, shiftId, oldName, "pending"),
+    }), true);
   }
   function toggleLead(shiftId: string, guardName: string) {
-    updateState(
-      (cur) => ({
-        ...cur,
-        shifts: cur.shifts.map((s) => {
-          if (s.id !== shiftId) return s;
-          const currentlyLead = isLeadForShift(s, guardName);
-          return {
-            ...s,
-            assignments: s.assignments.map((a) => (sameName(a.name, guardName) ? { ...a, lead: !currentlyLead } : { ...a, lead: false })),
-          };
-        }),
+    updateState((cur) => ({
+      ...cur,
+      shifts: cur.shifts.map((s) => {
+        if (s.id !== shiftId) return s;
+        const currentlyLead = isLeadForShift(s, guardName);
+        return { ...s, assignments: s.assignments.map((a) => (sameName(a.name, guardName) ? { ...a, lead: !currentlyLead } : { ...a, lead: false })) };
       }),
-      true,
-    );
-  }
-  function saveEdit() {
-    if (!edit || !edit.value.trim()) return;
-    updateState((cur) => ({ ...cur, shifts: cur.shifts.map((s) => (s.id === edit.shiftId ? { ...s, assignments: s.assignments.map((a) => (sameName(a.name, edit.oldName) ? { ...a, name: edit.value.trim() } : a)) } : s)) }), true);
-    setEdit(null);
+    }), true);
   }
   function saveLifeguard() {
     const cleanName = guardForm.name.trim();
@@ -428,17 +435,14 @@ export default function Home() {
     setResetText("");
   }
 
-  function potentialRequestsForShift(shift: Shift) {
-    const seen = new Set<string>();
-    return state.requests
-      .filter((r) => r.shiftId === shift.id && !alreadyAssigned(shift, r.name))
-      .sort((a, b) => (a.status === b.status ? b.createdAt.localeCompare(a.createdAt) : a.status === "pending" ? -1 : 1))
-      .filter((r) => {
-        const k = r.name.toLowerCase();
-        if (seen.has(k)) return false;
-        seen.add(k);
-        return true;
-      });
+  function pendingForShift(shift: Shift) {
+    return requests.filter((r) => r.shiftId === shift.id && r.status === "pending" && !alreadyAssigned(shift, r.name));
+  }
+  function availableForShift(shift: Shift) {
+    const byName = new Map<string, { name: string; request?: RequestItem }>();
+    for (const r of requests.filter((x) => x.shiftId === shift.id && x.status !== "rejected" && !alreadyAssigned(shift, x.name))) byName.set(nameKey(r.name), { name: r.name, request: r });
+    for (const g of state.lifeguards) if (!alreadyAssigned(shift, g.name) && !byName.has(nameKey(g.name))) byName.set(nameKey(g.name), { name: g.name });
+    return Array.from(byName.values()).sort((a, b) => (a.request && !b.request ? -1 : !a.request && b.request ? 1 : a.name.localeCompare(b.name)));
   }
 
   function renderNameChip(guardName: string, action?: "add" | "remove", onClick?: () => void, status?: string, doubleFlag = false, lead = false, onLeadClick?: () => void) {
@@ -448,43 +452,21 @@ export default function Home() {
         {doubleFlag ? <em className="doubleFlag">DOUBLE</em> : null}
         {lead ? <em className="leadBadge">Lead</em> : null}
         {status ? <em>{status}</em> : null}
-        {onLeadClick ? (
-          <button className={lead ? "leadStarBtn active" : "leadStarBtn"} onClick={onLeadClick} type="button" aria-label={`${lead ? "Remove" : "Make"} ${guardName} Lead`}>
-            {lead ? "★" : "☆"}
-          </button>
-        ) : null}
-        {action ? (
-          <button className={action === "add" ? "chipAction add" : "chipAction remove"} onClick={onClick} type="button" aria-label={`${action === "add" ? "Add" : "Remove"} ${guardName}`}>
-            {action === "add" ? "+" : "−"}
-          </button>
-        ) : null}
+        {onLeadClick ? <button className={lead ? "leadStarBtn active" : "leadStarBtn"} onClick={onLeadClick} type="button" aria-label={`${lead ? "Remove" : "Make"} ${guardName} Lead`}>{lead ? "★" : "☆"}</button> : null}
+        {action ? <button className={action === "add" ? "chipAction add" : "chipAction remove"} onClick={onClick} type="button" aria-label={`${action === "add" ? "Add" : "Remove"} ${guardName}`}>{action === "add" ? "+" : "×"}</button> : null}
       </span>
     );
   }
-
   function renderApprovedShiftForMe(shift: Shift) {
-    const names = shift.assignments.map((a) => a.name).filter(Boolean);
-    const coworkers = names.filter((n) => !sameName(n, selectedName));
+    const coworkers = shift.assignments.map((a) => a.name).filter((n) => !sameName(n, selectedName));
     const isLead = isLeadForShift(shift, selectedName);
     return (
       <div key={shift.id} className={isLead ? "shiftBtn approvedOnly leadApproved" : "shiftBtn approvedOnly"}>
-        <span className="shiftTitle">
-          <span>
-            {niceDate(shift.date)} · {shift.type === "AM" ? "Morning" : "Afternoon"}
-          </span>
-          <span>
-            {shift.start} - {shift.end}
-          </span>
-        </span>
-        <span className="shiftMeta">
-          {isLead ? "★ You are Lead for this shift" : "You are approved for this shift"}
-          {coworkers.length ? ` with ${coworkers.join(", ")}` : "."}
-        </span>
-        {isLead ? <span className="leadCallout">★ Lead shift</span> : null}
+        <span className="shiftTitle"><span>{niceDate(shift.date)} · {shiftLabel(shift.type)}</span><span>{shift.start} - {shift.end}</span></span>
+        <span className="shiftMeta">{isLead ? "★ You are Lead for this shift" : "You are approved for this shift"}{coworkers.length ? ` with ${coworkers.join(", ")}` : "."}</span>
       </div>
     );
   }
-
   function renderSelectableShift(shift: Shift) {
     const requested = myRequests.some((r) => r.shiftId === shift.id && r.status !== "rejected");
     const isSelected = selected.includes(shift.id);
@@ -493,46 +475,35 @@ export default function Home() {
     const full = spots <= 0;
     return (
       <button key={shift.id} className="shiftBtn" data-selected={isSelected} disabled={requested || meAssigned || full} onClick={() => toggleShift(shift.id)}>
-        <span className="shiftTitle">
-          <span>{shift.type === "AM" ? "Morning" : "Afternoon"}</span>
-          <span>
-            {shift.start} - {shift.end}
-          </span>
-        </span>
-        <span>
-          {meAssigned ? <span className="badge badgeFull">You work</span> : null} {requested ? <span className="badge badgePending">Already requested</span> : null} {isSelected ? <span className="badge badgePending">Selected</span> : null} {full ? <span className="badge badgeDanger">Full</span> : <span className="badge badgeOpen">{spots} open</span>}
-        </span>
+        <span className="shiftTitle"><span>{shift.type === "AM" ? "Morning" : "Afternoon"}</span><span>{shift.start} - {shift.end}</span></span>
+        <span>{meAssigned ? <span className="badge badgeFull">You work</span> : null} {requested ? <span className="badge badgePending">Already requested</span> : null} {isSelected ? <span className="badge badgePending">Selected</span> : null} {full ? <span className="badge badgeDanger">Full</span> : <span className="badge badgeOpen">{spots} open</span>}</span>
       </button>
     );
   }
-
   function renderAdminCell(date: string, type: ShiftType) {
     const shift = findShift(date, type);
     if (!shift) return <span className="small">No shift</span>;
-    const potentials = potentialRequestsForShift(shift);
+    const pending = pendingForShift(shift);
+    const available = availableForShift(shift);
     return (
       <div className="adminShiftCell">
-        <div className="cellTime">
-          {type} · {shift.start} - {shift.end}
+        <div className="row"><div><h3>{shiftLabel(type)}</h3><div className="cellTime">{shift.start} - {shift.end}</div></div><span className={overCount(shift) > 0 ? "badge badgeDanger" : openCount(shift) > 0 ? "badge badgeOpen" : "badge badgeFull"}>{overCount(shift) > 0 ? `${overCount(shift)} overfilled` : openCount(shift) > 0 ? `${openCount(shift)} open` : "Full"}</span></div>
+        <div className="nameWrap">{shift.assignments.length === 0 ? <span className="openText">No one assigned.</span> : shift.assignments.map((a) => renderNameChip(a.name, "remove", () => removeAssignment(shift.id, a.name), undefined, isDoubleForDate(date, a.name), Boolean(a.lead), () => toggleLead(shift.id, a.name)))}</div>
+        <div className="alternateBox">
+          <div className="small">Pending requests for this {shiftLabel(type)} shift</div>
+          <div className="nameWrap">{pending.length ? pending.map((r) => renderNameChip(r.name, "add", () => approveRequest(r), wouldCreateDouble(shift, r.name) ? "double" : undefined, wouldCreateDouble(shift, r.name))) : <span className="small">No pending requests for this shift.</span>}</div>
         </div>
-        <div className="nameWrap">
-          {shift.assignments.length === 0 ? <span className="openText">OPEN</span> : null}
-          {shift.assignments.map((a) => renderNameChip(a.name, "remove", () => removeAssignment(shift.id, a.name), undefined, isDoubleForDate(date, a.name), Boolean(a.lead), () => toggleLead(shift.id, a.name)))}
+        <div className="alternateBox">
+          <div className="small">Guards available for this shift</div>
+          <div className="nameWrap">{available.length ? available.map((item) => renderNameChip(item.name, "add", () => item.request ? approveRequest(item.request) : addManualToShift(shift.id, item.name), item.request?.status === "approved" ? "available" : item.request?.status, wouldCreateDouble(shift, item.name))) : <span className="small">No available guards listed.</span>}</div>
         </div>
-        <span className={overCount(shift) > 0 ? "badge badgeDanger" : openCount(shift) > 0 ? "badge badgeOpen" : "badge badgeFull"}>{overCount(shift) > 0 ? `${overCount(shift)} overfilled` : openCount(shift) > 0 ? `${openCount(shift)} open` : "Full"}</span>
-        {potentials.length ? (
-          <div className="alternateBox">
-            <div className="small">Available alternates</div>
-            <div className="nameWrap">{potentials.map((r) => renderNameChip(r.name, "add", () => approveRequest(r), wouldCreateDouble(shift, r.name) ? `${r.status} · double` : r.status, wouldCreateDouble(shift, r.name)))}</div>
-          </div>
-        ) : null}
+        <div className="actions"><input className="input" placeholder="Type lifeguard name" value={manualName} onChange={(e) => setManualName(e.target.value)} /><button className="primaryBtn" onClick={() => addManual(shift.id)}>Add</button></div>
       </div>
     );
   }
-
   function exportReport() {
     const rows = rowsBetween(state.shifts, reportStart, reportEnd);
-    const csv = ["Serenity Shores Pool Schedule", `${longDate(reportStart)} through ${longDate(reportEnd)}`, "", "Date,AM 10-3:30,PM 3:30-10,Open Spots", ...rows.map((r) => [r.date, r.am, r.pm, String(r.open)].map(csvSafe).join(","))].join("\n");
+    const csv = [`Serenity Shores Pool Schedule ${VERSION}`, `${longDate(reportStart)} through ${longDate(reportEnd)}`, "", "Date,AM 10-3:30,PM 3:30-10,Open Spots", ...rows.map((r) => [r.date, r.am, r.pm, String(r.open)].map(csvSafe).join(","))].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -546,326 +517,15 @@ export default function Home() {
 
   return (
     <main className="appShell">
-      <div className="topStrip">Serenity Shores pool · Lifeguard schedule</div>
-      <header className="header">
-        <button className="brand" onClick={() => setView("entry")} style={{ border: 0, background: "transparent", cursor: "pointer" }}>
-          <div className="brandText">Lifeguard Schedule</div>
-        </button>
-        <button className="adminBtn" onClick={() => setView(adminAuthed ? "admin" : "adminPin")}>
-          Admin
-        </button>
-      </header>
+      <div className="topStrip">Serenity Shores pool · Lifeguard schedule · {VERSION}</div>
+      <header className="header"><button className="brand" onClick={() => setView("entry")} style={{ border: 0, background: "transparent", cursor: "pointer" }}><div className="brandText">Lifeguard Schedule {VERSION}</div></button><button className="adminBtn" onClick={() => setView(adminAuthed ? "admin" : "adminPin")}>Admin</button></header>
       <section className="main">
-        <p className="small" style={{ marginTop: 0 }}>
-          {syncStatus} · {shared ? "shared" : "local"}
-        </p>
-
-        {view === "entry" ? (
-          <div className="card hero stack">
-            <span className="kicker">Lifeguard check-in</span>
-            <h1>Help fill the pool schedule.</h1>
-            <p className="lead">Enter your first name and your six digit PIN, then select ALL SHIFTS YOU ARE AVAILABLE TO COVER. (You will not get all of the shifts you select, and no one will have a double shift).</p>
-            <input className="input" placeholder="First name" value={name} onChange={(e) => setName(e.target.value)} />
-            <input className="input" inputMode="numeric" placeholder="Six digit PIN" value={lifeguardPin} onChange={(e) => setLifeguardPin(cleanPin(e.target.value))} onKeyDown={(e) => e.key === "Enter" && submitName()} />
-            {loginError ? (
-              <p className="small" style={{ color: "#b42318" }}>
-                {loginError}
-              </p>
-            ) : null}
-            <button className="primaryBtn" onClick={submitName}>
-              See Open Shifts
-            </button>
-            <p className="small">Lifeguards can request shifts from today through {niceDate(selectableEnd)}. New shifts unlock automatically each day.</p>
-          </div>
-        ) : null}
-
-        {view === "select" ? (
-          <div className="stack">
-            <div className="card stack">
-              <h2>Hi, {selectedName}</h2>
-              <p className="small">Select every AM and PM shift you are available to cover. You may select both shifts on the same day if you are available all day. Hollie will approve the final schedule.</p>
-            </div>
-            <div className="card stack">
-              <h3>Your approved schedule: next two weeks</h3>
-              {myApprovedShifts.length ? myApprovedShifts.map((s) => renderApprovedShiftForMe(s)) : <p className="small">You do not have any approved shifts in the next two weeks yet.</p>}
-            </div>
-            <div className="card stack">
-              <h3>Select availability: next two weeks</h3>
-              {twoWeekDates.map((date) => (
-                <div className="shiftCard" key={date}>
-                  <div className="dateLine">{niceDate(date)}</div>
-                  <div className="shiftGrid">
-                    {["AM", "PM"].map((t) => {
-                      const s = findShift(date, t as ShiftType);
-                      return s ? renderSelectableShift(s) : null;
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="stickySubmit">
-              <div className="stickySubmitInner">
-                <button className="primaryBtn" disabled={!selected.length} onClick={submitRequests}>
-                  Submit {selected.length || ""} shift request{selected.length === 1 ? "" : "s"}
-                </button>
-                <span className="small">Hollie/admin must approve before names appear on your final schedule.</span>
-              </div>
-            </div>
-          </div>
-        ) : null}
-
-        {view === "confirm" ? (
-          <div className="card hero stack">
-            <span className="kicker">Submitted</span>
-            <h1>Thank you.</h1>
-            <p className="lead">Your available shifts were sent to admin for approval.</p>
-            <button className="primaryBtn" onClick={() => setView("entry")}>
-              Done
-            </button>
-          </div>
-        ) : null}
-
-        {view === "adminPin" ? (
-          <div className="card hero stack">
-            <span className="kicker">Admin access</span>
-            <h1>Enter code.</h1>
-            <input className="input" inputMode="numeric" placeholder="Admin code" value={pin} onChange={(e) => setPin(e.target.value)} />
-            <button
-              className="primaryBtn"
-              onClick={() => {
-                if (pin === ADMIN_CODE) {
-                  setAdminAuthed(true);
-                  setView("admin");
-                }
-              }}
-            >
-              Open Admin
-            </button>
-            <button className="ghostBtn" onClick={() => setView("entry")}>
-              Back
-            </button>
-          </div>
-        ) : null}
-
-        {view === "admin" ? (
-          <div className="stack">
-            <div className="card stack">
-              <span className="kicker">Admin dashboard</span>
-              <h2>Schedule control</h2>
-              <div className="panelGrid">
-                <div className="stat">
-                  <div className="statNum">{pendingRequests.length}</div>
-                  <div className="statLabel">Pending</div>
-                </div>
-                <div className="stat">
-                  <div className="statNum">{state.lifeguards.length}</div>
-                  <div className="statLabel">Lifeguards</div>
-                </div>
-                <div className="stat">
-                  <div className="statNum">{state.shifts.filter((s) => s.date >= adminStart && s.date <= adminEnd && overCount(s) > 0).length}</div>
-                  <div className="statLabel">Overfilled shifts</div>
-                </div>
-                <div className="stat">
-                  <div className="statNum">{doubleFlags.length}</div>
-                  <div className="statLabel">Double flags</div>
-                </div>
-              </div>
-              <div className="actions">
-                <button className="primaryBtn" onClick={approveAll}>
-                  Approve All Pending
-                </button>
-                <button className="ghostBtn" onClick={() => void loadShared()}>
-                  Refresh
-                </button>
-              </div>
-              <p className="small">Approve All approves every pending request and intentionally allows overfilled shifts. Use the colored + and − buttons below to balance the final schedule. DOUBLE flags mark a lifeguard assigned to both AM and PM on the same day.</p>
-            </div>
-
-            <div className="card stack">
-              <div className="row">
-                <div>
-                  <h3>{scheduleWindow === "current" ? "Current" : "Following"} two-week schedule</h3>
-                  <p className="small">{longDate(adminStart)} through {longDate(adminEnd)}</p>
-                </div>
-                <button className="ghostBtn" onClick={() => setScheduleWindow(scheduleWindow === "current" ? "next" : "current")}>
-                  {scheduleWindow === "current" ? "Show following two weeks" : "Show current two weeks"}
-                </button>
-              </div>
-              {adminRows.map((r) => (
-                <div className="adminDay" key={r.dateIso}>
-                  <div className="dateLine">{niceDate(r.dateIso)}</div>
-                  <div className="adminGrid">
-                    <div>{renderAdminCell(r.dateIso, "AM")}</div>
-                    <div>{renderAdminCell(r.dateIso, "PM")}</div>
-                  </div>
-                </div>
-              ))}
-              <div className="stack">
-                <h3>Balance graph</h3>
-                <p className="small">This compares approved shifts against submitted availability requests for the visible two-week schedule. Each lifeguard color is unique and updates when names, approvals, removals, or new availability requests change.</p>
-                <div className="balanceLegend">
-                  <span className="legendItem approvedLegend">Approved shifts</span>
-                  <span className="legendItem requestLegend">Availability requests</span>
-                </div>
-                <div className="balanceGraph">
-                  {balanceRows.map((row) => {
-                    const color = guardStyle(row.name);
-                    return (
-                      <div className="balanceGraphRow" key={row.name}>
-                        <span className="guardChip balanceName" style={color}>
-                          <strong>{row.name}</strong>
-                        </span>
-                        <div className="balanceBars">
-                          <div className="barLine">
-                            <span className="barLabel">Approved {row.approved}</span>
-                            <span className="barTrack">
-                              <span className="barFill approvedFill" style={{ width: `${(row.approved / maxBalanceValue) * 100}%`, background: color.borderColor }} />
-                            </span>
-                          </div>
-                          <div className="barLine">
-                            <span className="barLabel">Requests {row.requests}</span>
-                            <span className="barTrack">
-                              <span className="barFill requestFill" style={{ width: `${(row.requests / maxBalanceValue) * 100}%`, background: color.background, borderColor: color.borderColor }} />
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            <div className="card stack">
-              <h3>Approve or deny requests</h3>
-              <p className="small">The two-week calendar above is the main approval tool. This list is only for individual review.</p>
-              {pendingRequests.length === 0 ? (
-                <p className="small">No pending requests.</p>
-              ) : (
-                pendingRequests.map((r) => {
-                  const s = state.shifts.find((x) => x.id === r.shiftId);
-                  return (
-                    <div className="requestRow" key={r.id}>
-                      <div>
-                        {renderNameChip(r.name)}
-                        <br />
-                        <span className="small">{s ? `${niceDate(s.date)} · ${s.type} · ${s.start}-${s.end}` : r.shiftId}</span>
-                      </div>
-                      <div className="actions">
-                        <button className="primaryBtn" onClick={() => approveRequest(r)}>
-                          Approve
-                        </button>
-                        <button className="ghostBtn" onClick={() => rejectRequest(r)}>
-                          Deny
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            <div className="card stack">
-              <h3>Lifeguards and PINs</h3>
-              <input className="input" placeholder="Lifeguard first name" value={guardForm.name} onChange={(e) => setGuardForm({ ...guardForm, name: e.target.value })} />
-              <input className="input" inputMode="numeric" placeholder="Six digit PIN" value={guardForm.pin} onChange={(e) => setGuardForm({ ...guardForm, pin: cleanPin(e.target.value) })} />
-              <div className="actions">
-                <button className="primaryBtn" onClick={saveLifeguard}>
-                  {guardForm.id ? "Save Lifeguard" : "Add Lifeguard"}
-                </button>
-                {guardForm.id ? (
-                  <button className="ghostBtn" onClick={() => setGuardForm({ id: "", name: "", pin: "" })}>
-                    Cancel
-                  </button>
-                ) : null}
-              </div>
-              <div className="nameWrap">
-                {[...state.lifeguards].sort((a, b) => a.name.localeCompare(b.name)).map((g) => (
-                  <span className="guardChip" style={guardStyle(g.name)} key={g.id}>
-                    <strong>{g.name}</strong>
-                    <em>{g.pin}</em>
-                    <button className="miniBtn" onClick={() => setGuardForm(g)}>
-                      Edit
-                    </button>
-                    <button className="miniBtn danger" onClick={() => deleteLifeguard(g.id)}>
-                      Delete
-                    </button>
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className="card stack">
-              <h3>Manual schedule tools</h3>
-              <input className="input" placeholder="Name to add manually" value={manualName} onChange={(e) => setManualName(e.target.value)} />
-              {adminRows.map((r) => (
-                <div className="requestRow" key={`add-${r.dateIso}`}>
-                  <span>{niceDate(r.dateIso)}</span>
-                  <div className="actions">
-                    <button
-                      className="ghostBtn"
-                      onClick={() => {
-                        const s = findShift(r.dateIso, "AM");
-                        if (s) addManual(s.id);
-                      }}
-                    >
-                      Add AM
-                    </button>
-                    <button
-                      className="ghostBtn"
-                      onClick={() => {
-                        const s = findShift(r.dateIso, "PM");
-                        if (s) addManual(s.id);
-                      }}
-                    >
-                      Add PM
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="card stack">
-              <h3>Export report</h3>
-              <div className="row">
-                <input className="input" type="date" value={reportStart} onChange={(e) => setReportStart(e.target.value)} />
-                <input className="input" type="date" value={reportEnd} onChange={(e) => setReportEnd(e.target.value)} />
-              </div>
-              <button className="primaryBtn" onClick={exportReport}>
-                Download CSV
-              </button>
-            </div>
-
-            <div className="card stack dangerZone">
-              <h3>Reset schedule</h3>
-              <p className="small">This clears schedule and requests but keeps lifeguard names/PINs. Type RESET SCHEDULE.</p>
-              <input className="input" value={resetText} onChange={(e) => setResetText(e.target.value)} />
-              <button className="dangerBtn" onClick={resetAll}>
-                Reset Everything
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {edit ? (
-          <div className="modal">
-            <div className="modalCard stack">
-              <h3>Edit approved guard</h3>
-              <input className="input" value={edit.value} onChange={(e) => setEdit({ ...edit, value: e.target.value })} />
-              <div className="actions">
-                <button className="primaryBtn" onClick={saveEdit}>
-                  Save
-                </button>
-                <button className="ghostBtn" onClick={() => removeAssignment(edit.shiftId, edit.oldName)}>
-                  Remove
-                </button>
-                <button className="ghostBtn" onClick={() => setEdit(null)}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
+        <p className="small" style={{ marginTop: 0 }}>{syncStatus} · {shared ? "shared" : "local"}</p>
+        {view === "entry" ? <div className="card hero stack"><span className="kicker">Lifeguard check-in · {VERSION}</span><h1>Help fill the pool schedule.</h1><p className="lead">Enter your first name and your six digit PIN, then select ALL SHIFTS YOU ARE AVAILABLE TO COVER. Each guard can request each shift one time only.</p><input className="input" placeholder="First name" value={name} onChange={(e) => setName(e.target.value)} /><input className="input" inputMode="numeric" placeholder="Six digit PIN" value={lifeguardPin} onChange={(e) => setLifeguardPin(cleanPin(e.target.value))} onKeyDown={(e) => e.key === "Enter" && submitName()} />{loginError ? <p className="small" style={{ color: "#b42318" }}>{loginError}</p> : null}<button className="primaryBtn" onClick={submitName}>See Open Shifts</button><p className="small">Lifeguards can request shifts from today through {niceDate(selectableEnd)}.</p></div> : null}
+        {view === "select" ? <div className="stack"><div className="card stack"><h2>Hi, {selectedName}</h2><p className="small">Select every AM and PM shift you are available to cover. Duplicate requests for the same guard and shift are blocked.</p></div><div className="card stack"><h3>Your approved schedule: next two weeks</h3>{myApprovedShifts.length ? myApprovedShifts.map((s) => renderApprovedShiftForMe(s)) : <p className="small">You do not have any approved shifts in the next two weeks yet.</p>}</div><div className="card stack"><h3>Select availability: next two weeks</h3>{twoWeekDates.map((date) => <div className="shiftCard" key={date}><div className="dateLine">{niceDate(date)}</div><div className="shiftGrid">{["AM", "PM"].map((t) => { const s = findShift(date, t as ShiftType); return s ? renderSelectableShift(s) : null; })}</div></div>)}</div><div className="stickySubmit"><div className="stickySubmitInner"><button className="primaryBtn" disabled={!selected.length} onClick={submitRequests}>Submit {selected.length || ""} shift request{selected.length === 1 ? "" : "s"}</button><span className="small">Hollie/admin must approve before names appear on your final schedule.</span></div></div></div> : null}
+        {view === "confirm" ? <div className="card hero stack"><span className="kicker">Submitted · {VERSION}</span><h1>Thank you.</h1><p className="lead">Your available shifts were sent to admin for approval.</p><button className="primaryBtn" onClick={() => setView("entry")}>Done</button></div> : null}
+        {view === "adminPin" ? <div className="card hero stack"><span className="kicker">Admin access · {VERSION}</span><h1>Enter code.</h1><input className="input" inputMode="numeric" placeholder="Admin code" value={pin} onChange={(e) => setPin(e.target.value)} /><button className="primaryBtn" onClick={() => { if (pin === ADMIN_CODE) { setAdminAuthed(true); setView("admin"); } }}>Open Admin</button><button className="ghostBtn" onClick={() => setView("entry")}>Back</button></div> : null}
+        {view === "admin" ? <div className="stack"><div className="card stack"><span className="kicker">Admin dashboard · {VERSION}</span><h2>Schedule control</h2><div className="panelGrid"><div className="stat"><div className="statNum">{pendingRequests.length}</div><div className="statLabel">Pending</div></div><div className="stat"><div className="statNum">{state.lifeguards.length}</div><div className="statLabel">Lifeguards</div></div><div className="stat"><div className="statNum">{state.shifts.filter((s) => s.date >= adminStart && s.date <= adminEnd && overCount(s) > 0).length}</div><div className="statLabel">Overfilled shifts</div></div><div className="stat"><div className="statNum">{doubleFlags.length}</div><div className="statLabel">Double flags</div></div></div><div className="actions"><button className="primaryBtn" onClick={approveAll}>Approve All Pending</button><button className="ghostBtn" onClick={() => void loadShared()}>Refresh</button></div><p className="small">{VERSION} removes duplicate request displays. The manager view now shows each AM request under the AM shift and each PM request under the PM shift. Removing an assigned guard returns that guard to the available list for that same shift.</p></div><div className="card stack"><div className="row"><div><h3>{scheduleWindow === "current" ? "Current" : "Following"} two-week schedule</h3><p className="small">{longDate(adminStart)} through {longDate(adminEnd)}</p></div><button className="ghostBtn" onClick={() => setScheduleWindow(scheduleWindow === "current" ? "next" : "current")}>{scheduleWindow === "current" ? "Show following two weeks" : "Show current two weeks"}</button></div>{adminRows.map((r) => <div className="adminDay" key={r.dateIso}><div className="dateLine">{longDate(r.dateIso)}</div><div className="adminGrid"><div>{renderAdminCell(r.dateIso, "AM")}</div><div>{renderAdminCell(r.dateIso, "PM")}</div></div></div>)}</div><div className="card stack"><h3>Balance graph</h3><p className="small">Approved shifts compared against unique availability requests for the visible two-week schedule.</p><div className="balanceLegend"><span className="legendItem approvedLegend">Approved shifts</span><span className="legendItem requestLegend">Availability requests</span></div><div className="balanceGraph">{balanceRows.map((row) => { const color = guardStyle(row.name); return <div className="balanceGraphRow" key={row.name}><span className="guardChip balanceName" style={color}><strong>{row.name}</strong></span><div className="balanceBars"><div className="barLine"><span className="barLabel">Approved {row.approved}</span><span className="barTrack"><span className="barFill approvedFill" style={{ width: `${(row.approved / maxBalanceValue) * 100}%`, background: color.borderColor }} /></span></div><div className="barLine"><span className="barLabel">Requests {row.requests}</span><span className="barTrack"><span className="barFill requestFill" style={{ width: `${(row.requests / maxBalanceValue) * 100}%`, background: color.background, borderColor: color.borderColor }} /></span></div></div></div>; })}</div></div><div className="card stack"><h3>Lifeguards and PINs</h3><input className="input" placeholder="Lifeguard first name" value={guardForm.name} onChange={(e) => setGuardForm({ ...guardForm, name: e.target.value })} /><input className="input" inputMode="numeric" placeholder="Six digit PIN" value={guardForm.pin} onChange={(e) => setGuardForm({ ...guardForm, pin: cleanPin(e.target.value) })} /><div className="actions"><button className="primaryBtn" onClick={saveLifeguard}>{guardForm.id ? "Save Lifeguard" : "Add Lifeguard"}</button>{guardForm.id ? <button className="ghostBtn" onClick={() => setGuardForm({ id: "", name: "", pin: "" })}>Cancel</button> : null}</div><div className="nameWrap">{[...state.lifeguards].sort((a, b) => a.name.localeCompare(b.name)).map((g) => <span className="guardChip" style={guardStyle(g.name)} key={g.id}><strong>{g.name}</strong><em>{g.pin}</em><button className="miniBtn" onClick={() => setGuardForm(g)}>Edit</button><button className="miniBtn danger" onClick={() => deleteLifeguard(g.id)}>Delete</button></span>)}</div></div><div className="card stack"><h3>Export report</h3><div className="row"><input className="input" type="date" value={reportStart} onChange={(e) => setReportStart(e.target.value)} /><input className="input" type="date" value={reportEnd} onChange={(e) => setReportEnd(e.target.value)} /></div><button className="primaryBtn" onClick={exportReport}>Download CSV</button></div><div className="card stack dangerZone"><h3>Reset schedule</h3><p className="small">This clears schedule and requests but keeps lifeguard names/PINs. Type RESET SCHEDULE.</p><input className="input" value={resetText} onChange={(e) => setResetText(e.target.value)} /><button className="dangerBtn" onClick={resetAll}>Reset Everything</button></div></div> : null}
       </section>
     </main>
   );
