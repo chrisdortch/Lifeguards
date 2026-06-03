@@ -25,12 +25,12 @@ function normalizeState(state: AppState): AppState {
     const incoming = incomingShiftMap.get(base.id);
     return incoming ? { ...base, ...incoming, type: base.type, start: base.start, end: base.end, assignments: incoming.assignments || [] } : base;
   });
-  return { ...initial, ...state, shifts, requests: Array.isArray(state.requests) ? state.requests : [], lifeguards: Array.isArray(state.lifeguards) ? state.lifeguards : [], updatedAt: state.updatedAt || new Date().toISOString() };
+  return { ...initial, ...state, shifts, requests: Array.isArray(state.requests) ? state.requests : [], lifeguards: Array.isArray(state.lifeguards) ? state.lifeguards : [], history: Array.isArray(state.history) ? state.history : [], updatedAt: state.updatedAt || new Date().toISOString() };
 }
 async function seedFromV1(): Promise<AppState> {
   try {
     const v1 = await getStateV1();
-    return normalizeState({ ...blankState(), ...(v1 as unknown as Partial<AppState>), updatedAt: new Date().toISOString() });
+    return normalizeState({ ...blankState(), ...(v1 as unknown as Partial<AppState>), history: [], updatedAt: new Date().toISOString() });
   } catch { return blankState(); }
 }
 function hasAssignments(state: AppState) { return state.shifts.some((s) => s.assignments.length > 0); }
@@ -39,9 +39,14 @@ function mergeRequests(existing: AppState["requests"], incoming: AppState["reque
   for (const r of incoming) map.set(r.id, r);
   return Array.from(map.values()).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
+function mergeHistory(existing: AppState["history"] = [], incoming: AppState["history"] = []) {
+  const map = new Map(existing.map((h) => [h.id, h]));
+  for (const h of incoming) map.set(h.id, h);
+  return Array.from(map.values()).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 2000);
+}
 function mergeStates(existing: AppState, incoming: AppState, options: SaveOptions = {}): AppState {
   const current = normalizeState(existing), next = normalizeState(incoming);
-  return { shifts: options.replace ? next.shifts : current.shifts, requests: mergeRequests(current.requests, next.requests), lifeguards: options.hardReplace || next.lifeguards.length > 0 ? next.lifeguards : current.lifeguards, updatedAt: new Date().toISOString() };
+  return { shifts: options.replace ? next.shifts : current.shifts, requests: mergeRequests(current.requests, next.requests), lifeguards: options.hardReplace || next.lifeguards.length > 0 ? next.lifeguards : current.lifeguards, history: mergeHistory(current.history, next.history), updatedAt: new Date().toISOString() };
 }
 
 export async function getStateV3(): Promise<AppState> {
