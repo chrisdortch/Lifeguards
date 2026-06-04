@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 
 export const runtime = "edge";
-export const alt = "Lifeguard Schedule V6";
+export const alt = "Lifeguard Schedule V7";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -23,14 +23,14 @@ export default function Image() {
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ fontSize: 34, fontWeight: 900, letterSpacing: 2, textTransform: "uppercase", color: "#075f76" }}>Serenity Shores Pool</div>
-          <div style={{ fontSize: 36, fontWeight: 900, padding: "18px 32px", borderRadius: 999, background: "#075f76", color: "white" }}>V6</div>
+          <div style={{ fontSize: 36, fontWeight: 900, padding: "18px 32px", borderRadius: 999, background: "#075f76", color: "white" }}>V7</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-          <div style={{ fontSize: 96, lineHeight: 0.92, fontWeight: 950, letterSpacing: -5 }}>Lifeguard Schedule V6</div>
-          <div style={{ fontSize: 42, lineHeight: 1.18, color: "#31596b", maxWidth: 980 }}>AM, MID, and PM shifts. Safer pending-request clearing. Faster admin navigation.</div>
+          <div style={{ fontSize: 96, lineHeight: 0.92, fontWeight: 950, letterSpacing: -5 }}>Lifeguard Schedule V7</div>
+          <div style={{ fontSize: 42, lineHeight: 1.18, color: "#31596b", maxWidth: 980 }}>Lifeguard choices appear directly as available guards. No redundant pending section.</div>
         </div>
         <div style={{ display: "flex", gap: 24 }}>
-          {["MID shifts restored", "No Approve All trap", "Admin menu navigation"].map((text) => (
+          {["Available-only workflow", "AM / MID / PM shifts", "Safer admin controls"].map((text) => (
             <div key={text} style={{ fontSize: 26, fontWeight: 900, padding: "18px 24px", borderRadius: 999, background: "white", border: "3px solid rgba(7,95,118,0.18)" }}>{text}</div>
           ))}
         </div>
