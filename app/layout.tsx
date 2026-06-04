@@ -4,15 +4,15 @@ import "./logo-fix.css";
 import "./v6.css";
 
 const siteUrl = "https://lifeguards.vercel.app";
-const version = "V6";
+const version = "V7";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: `Lifeguard Schedule ${version}`,
-  description: "Lifeguard availability, AM/MID/PM shift requests, safe pending-request clearing, admin navigation, and printable reporting for Serenity Shores pool.",
+  description: "Lifeguard availability appears directly as available guards for AM/MID/PM shifts, with safer admin controls and section navigation for Serenity Shores pool.",
   openGraph: {
     title: `Lifeguard Schedule ${version}`,
-    description: "AM, MID, and PM shift requests with safer admin tools and section navigation.",
+    description: "No redundant pending section. Lifeguards appear as available for each selected shift.",
     url: siteUrl,
     siteName: `Lifeguard Schedule ${version}`,
     type: "website",
@@ -21,7 +21,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: `Lifeguard Schedule ${version}`,
-    description: "AM, MID, and PM shift requests with safer admin tools and section navigation.",
+    description: "No redundant pending section. Lifeguards appear as available for each selected shift.",
     images: ["/opengraph-image"]
   }
 };
