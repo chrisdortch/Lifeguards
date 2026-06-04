@@ -1,4 +1,4 @@
-export type ShiftType = "AM" | "PM";
+export type ShiftType = "AM" | "MID" | "PM";
 export type RequestStatus = "pending" | "approved" | "rejected";
 export type Assignment = { name: string; source?: "admin" | "request" | "manual"; lead?: boolean };
 export type Shift = { id: string; date: string; type: ShiftType; start: string; end: string; required: number; assignments: Assignment[] };
@@ -37,6 +37,7 @@ export function buildInitialShifts(): Shift[] {
   while (cursor <= END_DATE) {
     const date = isoDate(cursor);
     shifts.push({ id: `${date}-AM`, date, type: "AM", start: "10:00 AM", end: "3:30 PM", required: 3, assignments: [] });
+    shifts.push({ id: `${date}-MID`, date, type: "MID", start: "12:00 PM", end: "6:00 PM", required: 1, assignments: [] });
     shifts.push({ id: `${date}-PM`, date, type: "PM", start: "3:30 PM", end: "10:00 PM", required: 3, assignments: [] });
     cursor.setDate(cursor.getDate() + 1);
   }
