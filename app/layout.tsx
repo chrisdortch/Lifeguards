@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "./logo-fix.css";
+import "./v6.css";
 
 const siteUrl = "https://lifeguards.vercel.app";
 const version = "V6";
