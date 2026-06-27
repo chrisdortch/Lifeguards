@@ -1,14 +1,17 @@
 import { NextResponse } from "next/server";
 import type { AppState } from "../../../lib/schedule-v4";
+import { isAdminRequest } from "../../../lib/auth";
+import { legacyAnonymousState } from "../../../lib/state-access";
 import { getStateV4, hasDatabase, saveStateV4 } from "../../../lib/store-v4";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const state = await getStateV4();
-    return NextResponse.json({ ok: true, shared: hasDatabase(), state });
+    const admin = isAdminRequest(request);
+    return NextResponse.json({ ok: true, admin, shared: hasDatabase(), state: admin ? state : legacyAnonymousState(state) });
   } catch (error) {
     return NextResponse.json({ ok: false, shared: false, error: error instanceof Error ? error.message : "Unknown error" }, { status: 500 });
   }
@@ -16,6 +19,9 @@ export async function GET() {
 
 export async function PUT(request: Request) {
   try {
+    if (!isAdminRequest(request)) {
+      return NextResponse.json({ ok: false, error: "Admin login required." }, { status: 401 });
+    }
     const body = (await request.json()) as { state?: AppState; replace?: boolean; hardReplace?: boolean };
     if (!body.state || !Array.isArray(body.state.shifts) || !Array.isArray(body.state.requests)) {
       return NextResponse.json({ ok: false, error: "Invalid schedule state." }, { status: 400 });

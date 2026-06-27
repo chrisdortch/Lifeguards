@@ -7,7 +7,7 @@ Standalone scheduling app for Serenity Shores pool lifeguards.
 - Lifeguards enter their first name.
 - Lifeguards select open morning or afternoon shifts from the current date through Oct. 10, 2026.
 - Submitted shifts go into a pending request queue.
-- Admin opens the admin page with code `7900`.
+- Admin opens the admin page with the server-side admin code.
 - Admin approves or rejects requests.
 - Admin can manually add/remove scheduled lifeguards.
 - Admin can download a black-and-white PDF schedule report between any two dates.

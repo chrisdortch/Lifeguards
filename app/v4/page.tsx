@@ -7,7 +7,7 @@ type View = "entry" | "guard" | "adminPin" | "admin";
 type AdminTab = "schedule" | "requests" | "history" | "balance" | "guards" | "tools";
 type GuardTab = "requests" | "calendar";
 
-const ADMIN_CODE = "7900";
+const ADMIN_CODE = "__disabled__";
 const PIN_DIGITS = 6;
 const STORAGE_KEY = "serenity-shores-lifeguard-v4";
 

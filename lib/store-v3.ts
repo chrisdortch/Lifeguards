@@ -46,7 +46,7 @@ function mergeHistory(existing: AppState["history"] = [], incoming: AppState["hi
 }
 function mergeStates(existing: AppState, incoming: AppState, options: SaveOptions = {}): AppState {
   const current = normalizeState(existing), next = normalizeState(incoming);
-  return { shifts: options.replace ? next.shifts : current.shifts, requests: mergeRequests(current.requests, next.requests), lifeguards: options.hardReplace || next.lifeguards.length > 0 ? next.lifeguards : current.lifeguards, history: mergeHistory(current.history, next.history), updatedAt: new Date().toISOString() };
+  return { shifts: options.replace ? next.shifts : current.shifts, requests: mergeRequests(current.requests, next.requests), lifeguards: options.replace || options.hardReplace ? next.lifeguards : current.lifeguards, history: mergeHistory(current.history, next.history), updatedAt: new Date().toISOString() };
 }
 
 export async function getStateV3(): Promise<AppState> {

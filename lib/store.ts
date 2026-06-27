@@ -131,7 +131,7 @@ function mergeStates(existing: AppState, incoming: AppState, options: SaveOption
     // Admin schedule edits pass replace=true, which replaces assignments while still merging any newly submitted requests.
     shifts: options.replace ? next.shifts : current.shifts,
     requests: mergeRequests(current.requests, next.requests),
-    lifeguards: next.lifeguards,
+    lifeguards: options.replace || options.hardReplace ? next.lifeguards : current.lifeguards,
     updatedAt: new Date().toISOString(),
   });
 }

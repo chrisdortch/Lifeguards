@@ -78,7 +78,7 @@ function mergeStates(existing: AppState, incoming: AppState, options: SaveOption
   return {
     shifts: options.replace ? next.shifts : current.shifts,
     requests: mergeRequests(current.requests, next.requests),
-    lifeguards: options.hardReplace || next.lifeguards.length > 0 ? next.lifeguards : current.lifeguards,
+    lifeguards: options.replace || options.hardReplace ? next.lifeguards : current.lifeguards,
     settings: options.replace ? next.settings : { ...current.settings, ...next.settings },
     updatedAt: new Date().toISOString(),
   };

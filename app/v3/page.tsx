@@ -6,7 +6,7 @@ import { AppState, HistoryItem, Lifeguard, RequestItem, Shift, blankState, csvSa
 type View = "entry" | "guard" | "adminPin" | "admin";
 type AdminTab = "schedule" | "requests" | "history" | "balance" | "guards" | "tools";
 type GuardTab = "requests" | "calendar";
-const ADMIN_CODE = "7900";
+const ADMIN_CODE = "__disabled__";
 const PIN_DIGITS = 6;
 const STORAGE_KEY = "serenity-shores-lifeguard-v3";
 const COLORS = [["#e8f2ff","#1f67b1"],["#e7fff0","#17824a"],["#fff0e3","#b35a20"],["#f2e9ff","#6e35b9"],["#e6fbff","#0b8798"],["#fff0f6","#ba2e73"],["#f4ffd9","#7c9b13"],["#fff6d8","#ad7b05"]];
