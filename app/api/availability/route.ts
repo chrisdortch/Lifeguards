@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { guardNameForRequest } from "../../../lib/auth";
-import { addDaysIso, openCount, todayIso } from "../../../lib/schedule";
+import { addDaysIso, todayIso } from "../../../lib/schedule";
 import type { AppState, RequestItem } from "../../../lib/schedule";
 import { getState, hasDatabase, saveState } from "../../../lib/store";
 import { guardState } from "../../../lib/state-access";
@@ -65,7 +65,7 @@ export async function POST(request: Request) {
 
     for (const shiftId of shiftIds) {
       const shift = state.shifts.find((item) => item.id === shiftId);
-      if (!shift || shift.date < today || shift.date > selectableEnd || openCount(shift) <= 0) continue;
+      if (!shift || shift.date < today || shift.date > selectableEnd) continue;
       if (shift.assignments.some((assignment) => sameName(assignment.name, guard.name))) continue;
       const active = next.requests.some((item) => item.shiftId === shiftId && sameName(item.name, guard.name) && item.status !== "rejected");
       if (!active) next = { ...next, requests: upsertAvailabilityRequest(next, shiftId, guard.name) };
