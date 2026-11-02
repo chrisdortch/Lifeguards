@@ -9,7 +9,8 @@ export type AppState = { shifts: Shift[]; requests: RequestItem[]; lifeguards: L
 export const END_DATE = new Date("2026-10-10T12:00:00");
 
 export function isoDate(d: Date) {
-  return d.toISOString().slice(0, 10);
+  if (Number.isNaN(d.getTime())) throw new RangeError("Invalid time value");
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 export function todayIso() {
