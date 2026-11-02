@@ -9,7 +9,10 @@ export type AppState = { shifts: Shift[]; requests: RequestItem[]; lifeguards: L
 
 export const END_DATE = new Date("2026-10-10T12:00:00");
 
-export function isoDate(d: Date) { return d.toISOString().slice(0, 10); }
+export function isoDate(d: Date) {
+  if (Number.isNaN(d.getTime())) throw new RangeError("Invalid time value");
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 export function todayIso() { return isoDate(new Date()); }
 export function niceDate(iso: string) { return new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); }
 export function longDate(iso: string) { return new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric", year: "numeric" }); }
